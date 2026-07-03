@@ -60,6 +60,6 @@ export class GuardianNativeWeb extends WebPlugin implements GuardianNativePlugin
     return null;
   }
   async wasCheckinEscalationExecuted() {
-    return { executed: false };
+    return { executed: false, callsCompleted: false };
   }
 }

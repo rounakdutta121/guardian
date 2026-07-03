@@ -172,6 +172,55 @@ export class EmergencyEscalationService {
 
     return { sms: smsResults, calls: callResults };
   }
+
+  /** Call phase only — used when native background path already sent SMS. */
+  async runCallEscalationOnly(options: {
+    sessionId: string;
+    contacts: EmergencyContactTarget[];
+    mode: "sos" | "checkin";
+    onTimeline?: (event: TimelineEvent) => void;
+  }): Promise<{ calls: CallResult[] }> {
+    resetEscalationAbort();
+
+    const chain = this.prepareContacts(options.contacts, options.mode);
+    const callResults: CallResult[] = [];
+
+    for (let i = 0; i < chain.length; i++) {
+      if (isEscalationAborted()) break;
+
+      const contact = chain[i];
+      const result = await nativePhoneService.call(contact.phone);
+      const enriched: CallResult = {
+        ...result,
+        contactName: contact.name,
+        phone: contact.phone,
+        priority: contact.priority,
+        escalationIndex: i,
+      };
+      callResults.push(enriched);
+
+      options.onTimeline?.({
+        event: result.success
+          ? "escalation_call_initiated"
+          : "escalation_call_failed",
+        timestamp: new Date().toISOString(),
+        data: {
+          contact: contact.name,
+          phone: contact.phone,
+          priority: contact.priority,
+          index: i + 1,
+          total: chain.length,
+          method: result.method,
+        },
+      });
+
+      if (i < chain.length - 1 && !isEscalationAborted()) {
+        await delay(ESCALATION_CALL_WAIT_MS);
+      }
+    }
+
+    return { calls: callResults };
+  }
 }
 
 export const emergencyEscalationService = new EmergencyEscalationService();

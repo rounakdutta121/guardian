@@ -9,6 +9,7 @@ final class CheckinEscalationStore {
     private static final String PREFS = "guardian_checkin_escalation";
     private static final String KEY_PENDING_SYNC = "pending_sync_checkin_id";
     private static final String KEY_EXECUTED_PREFIX = "executed_";
+    private static final String KEY_CALLS_PREFIX = "calls_";
 
     private CheckinEscalationStore() {}
 
@@ -53,6 +54,7 @@ final class CheckinEscalationStore {
             .edit()
             .remove(planKey(checkinId))
             .remove(KEY_EXECUTED_PREFIX + checkinId)
+            .remove(KEY_CALLS_PREFIX + checkinId)
             .apply();
     }
 
@@ -69,6 +71,20 @@ final class CheckinEscalationStore {
         return context
             .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getBoolean(KEY_EXECUTED_PREFIX + checkinId, false);
+    }
+
+    static void markCallsCompleted(Context context, String checkinId) {
+        context
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_CALLS_PREFIX + checkinId, true)
+            .apply();
+    }
+
+    static boolean wereCallsCompleted(Context context, String checkinId) {
+        return context
+            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_CALLS_PREFIX + checkinId, false);
     }
 
     static String consumePendingSync(Context context) {

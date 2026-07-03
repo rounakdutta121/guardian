@@ -11,44 +11,39 @@ import android.os.Build;
 import android.os.IBinder;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
-import org.json.JSONObject;
 
-public class CheckinEscalationService extends Service {
+/**
+ * Short-lived foreground service so scheduled call alarms can start a call
+ * when the main escalation service is no longer running.
+ */
+public class CheckinCallService extends Service {
     private static final String TAG = "GuardianCheckin";
-    private static final String CHANNEL_ID = "guardian_checkin_escalation";
-    private static final int NOTIFICATION_ID = 91001;
+    private static final String CHANNEL_ID = "guardian_checkin_call";
+    private static final int NOTIFICATION_ID = 91002;
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        String checkinId = intent != null ? intent.getStringExtra("checkinId") : null;
-        if (checkinId == null) {
+        String phone = intent != null ? intent.getStringExtra("phone") : null;
+        String contactName = intent != null ? intent.getStringExtra("contactName") : null;
+
+        if (phone == null || phone.isEmpty()) {
             stopSelf();
             return START_NOT_STICKY;
         }
 
         createChannel();
-        Notification notification = buildNotification("Alerting your emergency contacts…");
+        String label = contactName != null && !contactName.isEmpty()
+            ? "Calling " + contactName + "…"
+            : "Calling emergency contact…";
+        Notification notification = buildNotification(label);
         startForegroundWithType(notification);
-
-        final NotificationManager notificationManager =
-            (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
 
         new Thread(() -> {
             try {
-                JSONObject plan = CheckinEscalationStore.loadPlan(this, checkinId);
-                if (plan != null && !CheckinEscalationStore.wasExecuted(this, checkinId)) {
-                    boolean ok = CheckinEscalationExecutor.execute(
-                        this,
-                        plan,
-                        message -> notificationManager.notify(
-                            NOTIFICATION_ID,
-                            buildNotification(message)
-                        )
-                    );
-                    Log.i(TAG, "Foreground escalation done checkinId=" + checkinId + " ok=" + ok);
-                }
+                boolean ok = EmergencyCallHelper.placeCall(this, phone);
+                Log.i(TAG, "CheckinCallService placed=" + ok + " phone=" + phone);
             } catch (Exception e) {
-                Log.e(TAG, "Foreground escalation error", e);
+                Log.e(TAG, "CheckinCallService error", e);
             } finally {
                 stopForeground(STOP_FOREGROUND_REMOVE);
                 stopSelf();
@@ -79,11 +74,10 @@ public class CheckinEscalationService extends Service {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationChannel channel = new NotificationChannel(
             CHANNEL_ID,
-            "Check-in emergency alerts",
+            "Check-in emergency calls",
             NotificationManager.IMPORTANCE_HIGH
         );
-        channel.setDescription("Runs when a safe check-in expires");
-        channel.enableVibration(true);
+        channel.setDescription("Places calls when a safe check-in expires");
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null) {
             manager.createNotificationChannel(channel);
@@ -104,9 +98,9 @@ public class CheckinEscalationService extends Service {
         return new NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Check-in missed")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setSmallIcon(android.R.drawable.ic_menu_call)
             .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
             .setContentIntent(pendingLaunch)
             .setOngoing(true)
             .build();

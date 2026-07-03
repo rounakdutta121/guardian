@@ -7,10 +7,12 @@ import {
   emergencyLocationTracker,
   communicationPermissions,
   isGuardianNativeAvailable,
+  emergencyEscalationService,
 } from "@/lib/communication";
 import {
   refreshLocationForEscalation,
   wasNativeCheckinEscalationExecuted,
+  wereNativeCheckinCallsCompleted,
   cancelCheckinAlarmsOnly,
   clearCheckinBackgroundEscalation,
   runStoredNativeCheckinEscalation,
@@ -186,10 +188,34 @@ export async function expireCheckinOnClient(
 
     const nativeAlreadyRan =
       nativeAlreadyQueued || (await wasNativeCheckinEscalationExecuted(checkinId));
+    const nativeCallsDone = nativeAlreadyRan
+      ? await wereNativeCheckinCallsCompleted(checkinId)
+      : false;
 
     if (emergencySession?.id && !options?.skipEscalation && !nativeAlreadyRan) {
       await runCheckinEscalation(emergencySession, "checkin_missed");
-    } else if (nativeAlreadyRan && emergencySession?.id) {
+    } else if (emergencySession?.id && nativeAlreadyRan) {
+      if (!nativeCallsDone) {
+        // Native background path sent SMS — place calls from foreground (older builds skipped calls)
+        await refreshLocationForEscalation();
+        await activateEmergencySession(emergencySession.id);
+        await communicationPermissions.ensureEmergencyPermissions();
+        try {
+          const res = await fetch("/api/emergency-contacts");
+          const contacts = res.ok ? await res.json() : [];
+          const { calls } = await emergencyEscalationService.runCallEscalationOnly({
+            sessionId: emergencySession.id,
+            contacts,
+            mode: "checkin",
+          });
+          const callOk = calls.some((c) => c.success);
+          if (!callOk && calls.length > 0) {
+            toast.error("Could not place calls — check Phone permission in Settings");
+          }
+        } catch (error) {
+          console.error("[Checkin] Call-only escalation failed:", error);
+        }
+      }
       clearPendingEscalation();
       emergencyLocationTracker.start(
         emergencySession.id,

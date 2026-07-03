@@ -1,12 +1,8 @@
 package app.guardian.safety.plugins.guardiannative;
 
 import android.Manifest;
-import android.app.AlarmManager;
-import android.app.PendingIntent;
 import android.content.Context;
-import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.os.Build;
 import android.telephony.SmsManager;
 import android.util.Log;
 import androidx.core.content.ContextCompat;
@@ -19,22 +15,29 @@ final class CheckinEscalationExecutor {
     private static final int SMS_DELAY_MS = 2000;
     private static final int CALL_DELAY_MS = 35000;
 
+    interface ProgressListener {
+        void onProgress(String message);
+    }
+
     private CheckinEscalationExecutor() {}
 
     static boolean execute(Context context, JSONObject plan) {
+        return execute(context, plan, null);
+    }
+
+    static boolean execute(Context context, JSONObject plan, ProgressListener listener) {
         if (plan == null) return false;
 
         try {
             String checkinId = plan.optString("checkinId", "");
             String message = plan.getString("message");
             JSONArray contacts = plan.getJSONArray("contacts");
-            int notificationId = plan.getInt("notificationId");
 
             if (!checkinId.isEmpty()) {
                 CheckinEscalationStore.markExecuted(context, checkinId);
             }
 
-            long baseTime = System.currentTimeMillis();
+            listener?.onProgress("Sending SMS to emergency contacts…");
 
             for (int i = 0; i < contacts.length(); i++) {
                 JSONObject contact = contacts.getJSONObject(i);
@@ -53,7 +56,11 @@ final class CheckinEscalationExecutor {
                 }
             }
 
-            scheduleCalls(context, contacts, notificationId, baseTime);
+            executeCalls(context, contacts, listener);
+
+            if (!checkinId.isEmpty()) {
+                CheckinEscalationStore.markCallsCompleted(context, checkinId);
+            }
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Escalation failed", e);
@@ -61,51 +68,43 @@ final class CheckinEscalationExecutor {
         }
     }
 
-    private static void scheduleCalls(
+    /**
+     * Place calls from the foreground service thread (Android blocks background call UI).
+     * Additional contacts are also scheduled via alarm as a fallback if the service is killed.
+     */
+    private static void executeCalls(
         Context context,
         JSONArray contacts,
-        int notificationId,
-        long baseTime
+        ProgressListener listener
     ) {
-        AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-        if (alarmManager == null) return;
-
         for (int i = 0; i < contacts.length(); i++) {
             try {
                 JSONObject contact = contacts.getJSONObject(i);
                 String phone = contact.optString("phone", "");
+                String name = contact.optString("name", "");
                 if (phone.isEmpty()) continue;
 
-                Intent callIntent = new Intent(context, CheckinCallReceiver.class);
-                callIntent.putExtra("phone", phone);
-                callIntent.putExtra("contactName", contact.optString("name", ""));
-
-                int requestCode = notificationId * 100 + i + 1;
-                int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    flags |= PendingIntent.FLAG_IMMUTABLE;
+                if (i > 0) {
+                    listener?.onProgress(
+                        "Waiting before calling next contact (" + (i + 1) + "/" + contacts.length() + ")…"
+                    );
+                    try {
+                        Thread.sleep(CALL_DELAY_MS);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
                 }
 
-                PendingIntent pendingIntent = PendingIntent.getBroadcast(
-                    context,
-                    requestCode,
-                    callIntent,
-                    flags
+                listener?.onProgress(
+                    "Calling " + (name.isEmpty() ? phone : name) +
+                    " (" + (i + 1) + "/" + contacts.length() + ")…"
                 );
 
-                long triggerAt = baseTime + (long) i * CALL_DELAY_MS;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    alarmManager.setExactAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        triggerAt,
-                        pendingIntent
-                    );
-                } else {
-                    alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
-                }
-                Log.i(TAG, "Scheduled call " + (i + 1) + " at " + triggerAt);
+                boolean placed = EmergencyCallHelper.placeCall(context, phone);
+                Log.i(TAG, "Call " + (i + 1) + " to " + phone + " placed=" + placed);
             } catch (Exception e) {
-                Log.e(TAG, "Failed to schedule call " + i, e);
+                Log.e(TAG, "Call phase failed at index " + i, e);
             }
         }
     }

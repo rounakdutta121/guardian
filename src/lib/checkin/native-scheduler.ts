@@ -273,3 +273,17 @@ export async function wasNativeCheckinEscalationExecuted(
     return false;
   }
 }
+
+export async function wereNativeCheckinCallsCompleted(
+  checkinId: string
+): Promise<boolean> {
+  if (!isGuardianNativeAvailable()) return false;
+  try {
+    const result = await GuardianNative.wasCheckinEscalationExecuted({
+      checkinId,
+    });
+    return Boolean(result.callsCompleted);
+  } catch {
+    return false;
+  }
+}

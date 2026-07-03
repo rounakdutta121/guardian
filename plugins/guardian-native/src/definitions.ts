@@ -99,5 +99,5 @@ export interface GuardianNativePlugin {
 
   wasCheckinEscalationExecuted(options: {
     checkinId: string;
-  }): Promise<{ executed: boolean }>;
+  }): Promise<{ executed: boolean; callsCompleted?: boolean }>;
 }

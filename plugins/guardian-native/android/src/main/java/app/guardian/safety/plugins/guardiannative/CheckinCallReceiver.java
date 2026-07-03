@@ -1,12 +1,9 @@
 package app.guardian.safety.plugins.guardiannative;
 
-import android.Manifest;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.net.Uri;
-import androidx.core.content.ContextCompat;
+import android.os.Build;
 
 public class CheckinCallReceiver extends BroadcastReceiver {
     @Override
@@ -16,34 +13,14 @@ public class CheckinCallReceiver extends BroadcastReceiver {
         String phone = intent.getStringExtra("phone");
         if (phone == null || phone.isEmpty()) return;
 
-        if (
-            ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            openDialer(context, phone);
-            return;
-        }
+        Intent serviceIntent = new Intent(context, CheckinCallService.class);
+        serviceIntent.putExtra("phone", phone);
+        serviceIntent.putExtra("contactName", intent.getStringExtra("contactName"));
 
-        try {
-            String normalized = phone.replaceAll("[^\\d+]", "");
-            Intent callIntent = new Intent(Intent.ACTION_CALL);
-            callIntent.setData(Uri.parse("tel:" + normalized));
-            callIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            context.startActivity(callIntent);
-        } catch (Exception e) {
-            openDialer(context, phone);
-        }
-    }
-
-    private void openDialer(Context context, String phone) {
-        try {
-            String normalized = phone.replaceAll("[^\\d+]", "");
-            Intent dialIntent = new Intent(Intent.ACTION_DIAL);
-            dialIntent.setData(Uri.parse("tel:" + normalized));
-            dialIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            context.startActivity(dialIntent);
-        } catch (Exception ignored) {
-            // ignore
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(serviceIntent);
+        } else {
+            context.startService(serviceIntent);
         }
     }
 }

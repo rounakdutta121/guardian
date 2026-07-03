@@ -579,6 +579,10 @@ public class GuardianNativePlugin extends Plugin {
             "executed",
             CheckinEscalationStore.wasExecuted(getContext(), checkinId)
         );
+        ret.put(
+            "callsCompleted",
+            CheckinEscalationStore.wereCallsCompleted(getContext(), checkinId)
+        );
         call.resolve(ret);
     }
 }

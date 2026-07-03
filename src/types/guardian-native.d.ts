@@ -79,7 +79,7 @@ declare module "guardian-native" {
     consumePendingCheckinExpire(): Promise<{ checkinId: string } | null>;
     wasCheckinEscalationExecuted(options: {
       checkinId: string;
-    }): Promise<{ executed: boolean }>;
+    }): Promise<{ executed: boolean; callsCompleted?: boolean }>;
   }
   export const GuardianNative: GuardianNativePlugin;
   export function isGuardianNativeAvailable(): boolean;

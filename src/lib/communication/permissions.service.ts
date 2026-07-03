@@ -155,7 +155,6 @@ export class CommunicationPermissionsService {
     phone: boolean;
   }> {
     const caps = await this.getDeviceCapabilities();
-    const location = caps.hasLocation ? await this.requestLocation() : false;
 
     let sms = false;
     let phone = false;
@@ -168,6 +167,8 @@ export class CommunicationPermissionsService {
       sms = caps.canSendSms;
       phone = caps.canMakeCalls;
     }
+
+    const location = caps.hasLocation ? await this.requestLocation() : false;
 
     return { location, sms, phone };
   }

@@ -48,7 +48,9 @@ export class NativeSmsService {
         return phones.map((phone) => ({
           phone,
           success: true,
-          method: "automatic" as const,
+          method: result.automatic
+            ? ("automatic" as const)
+            : ("native_composer" as const),
         }));
       }
     }
@@ -70,7 +72,11 @@ export class NativeSmsService {
     if (isCapacitorNative() && isAndroid()) {
       const result = await sendSmsAutomatic([normalizePhoneForNative(phone)], message);
       if (result && result.sent > 0) {
-        return { phone, success: true, method: "automatic" };
+        return {
+          phone,
+          success: true,
+          method: result.automatic ? "automatic" : "native_composer",
+        };
       }
     }
 

@@ -51,4 +51,5 @@ export {
 export {
   canUseAutomaticEmergencyComms,
   requestNativeEmergencyPermissions,
+  isGuardianNativeAvailable,
 } from "./native-bridge";

@@ -41,7 +41,7 @@ export class NativePhoneService {
       if (result?.placed) {
         return {
           success: true,
-          method: "automatic",
+          method: result.automatic ? "automatic" : "native_dialer",
           phone: normalized,
         };
       }

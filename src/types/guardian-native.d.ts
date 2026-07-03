@@ -11,13 +11,25 @@ declare module "guardian-native" {
     sms: boolean;
     phone: boolean;
   }
+  export interface OpenSmsComposerResult {
+    opened: boolean;
+  }
+  export interface OpenDialerResult {
+    opened: boolean;
+  }
   export interface GuardianNativePlugin {
     sendSmsAutomatic(options: {
       numbers: string[];
       text: string;
     }): Promise<SendSmsResult>;
     placeCallAutomatic(options: { number: string }): Promise<PlaceCallResult>;
+    openSmsComposer(options: {
+      numbers: string[];
+      text: string;
+    }): Promise<OpenSmsComposerResult>;
+    openDialer(options: { number: string }): Promise<OpenDialerResult>;
     requestEmergencyPermissions(): Promise<EmergencyPermissionsResult>;
   }
   export const GuardianNative: GuardianNativePlugin;
+  export function isGuardianNativeAvailable(): boolean;
 }

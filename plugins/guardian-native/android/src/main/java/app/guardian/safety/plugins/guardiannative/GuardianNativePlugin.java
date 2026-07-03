@@ -29,32 +29,30 @@ public class GuardianNativePlugin extends Plugin {
         boolean smsGranted = getPermissionState("sms") == PermissionState.GRANTED;
         boolean phoneGranted = getPermissionState("phone") == PermissionState.GRANTED;
 
-        if (!smsGranted) {
-            requestPermissionForAlias("sms", call, "emergencyPermsCallback");
-            return;
-        }
-        if (!phoneGranted) {
-            requestPermissionForAlias("phone", call, "emergencyPermsCallback");
+        if (smsGranted && phoneGranted) {
+            resolvePermissions(call);
             return;
         }
 
-        resolvePermissions(call);
+        if (!smsGranted) {
+            requestPermissionForAlias("sms", call, "afterSmsPermission");
+            return;
+        }
+
+        requestPermissionForAlias("phone", call, "afterPhonePermission");
     }
 
     @PermissionCallback
-    private void emergencyPermsCallback(PluginCall call) {
-        boolean smsGranted = getPermissionState("sms") == PermissionState.GRANTED;
-        boolean phoneGranted = getPermissionState("phone") == PermissionState.GRANTED;
-
-        if (!smsGranted) {
-            requestPermissionForAlias("sms", call, "emergencyPermsCallback");
-            return;
+    private void afterSmsPermission(PluginCall call) {
+        if (getPermissionState("phone") != PermissionState.GRANTED) {
+            requestPermissionForAlias("phone", call, "afterPhonePermission");
+        } else {
+            resolvePermissions(call);
         }
-        if (!phoneGranted) {
-            requestPermissionForAlias("phone", call, "emergencyPermsCallback");
-            return;
-        }
+    }
 
+    @PermissionCallback
+    private void afterPhonePermission(PluginCall call) {
         resolvePermissions(call);
     }
 
@@ -63,6 +61,71 @@ public class GuardianNativePlugin extends Plugin {
         ret.put("sms", getPermissionState("sms") == PermissionState.GRANTED);
         ret.put("phone", getPermissionState("phone") == PermissionState.GRANTED);
         call.resolve(ret);
+    }
+
+    /** Opens SMS app with recipients + body — no SEND_SMS permission required. */
+    @PluginMethod
+    public void openSmsComposer(PluginCall call) {
+        JSArray numbersArray = call.getArray("numbers");
+        String text = call.getString("text");
+
+        if (numbersArray == null || numbersArray.length() == 0) {
+            call.reject("numbers are required");
+            return;
+        }
+
+        try {
+            StringBuilder recipients = new StringBuilder();
+            for (int i = 0; i < numbersArray.length(); i++) {
+                String number = numbersArray.getString(i);
+                if (number == null || number.isEmpty()) continue;
+                if (recipients.length() > 0) recipients.append(";");
+                recipients.append(number.replaceAll("[^\\d+]", ""));
+            }
+
+            if (recipients.length() == 0) {
+                call.reject("No valid phone numbers");
+                return;
+            }
+
+            Intent intent = new Intent(Intent.ACTION_SENDTO);
+            intent.setData(Uri.parse("smsto:" + recipients));
+            if (text != null && !text.isEmpty()) {
+                intent.putExtra("sms_body", text);
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getActivity().startActivity(intent);
+
+            JSObject ret = new JSObject();
+            ret.put("opened", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to open SMS app: " + e.getMessage());
+        }
+    }
+
+    /** Opens dialer with number pre-filled — no CALL_PHONE permission required. */
+    @PluginMethod
+    public void openDialer(PluginCall call) {
+        String number = call.getString("number");
+        if (number == null || number.isEmpty()) {
+            call.reject("number is required");
+            return;
+        }
+
+        try {
+            String normalized = number.replaceAll("[^\\d+]", "");
+            Intent intent = new Intent(Intent.ACTION_DIAL);
+            intent.setData(Uri.parse("tel:" + normalized));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getActivity().startActivity(intent);
+
+            JSObject ret = new JSObject();
+            ret.put("opened", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to open dialer: " + e.getMessage());
+        }
     }
 
     @PluginMethod
@@ -79,7 +142,7 @@ public class GuardianNativePlugin extends Plugin {
         if (getPermissionState("sms") == PermissionState.GRANTED) {
             executeSendSms(call);
         } else {
-            call.reject("SMS permission denied — enable in Settings to send automatically");
+            call.reject("SMS permission denied");
         }
     }
 
@@ -104,11 +167,12 @@ public class GuardianNativePlugin extends Plugin {
                 String number = numbersArray.getString(i);
                 if (number == null || number.isEmpty()) continue;
 
+                String normalized = number.replaceAll("[^\\d+]", "");
                 ArrayList<String> parts = smsManager.divideMessage(text);
                 if (parts.size() > 1) {
-                    smsManager.sendMultipartTextMessage(number, null, parts, null, null);
+                    smsManager.sendMultipartTextMessage(normalized, null, parts, null, null);
                 } else {
-                    smsManager.sendTextMessage(number, null, text, null, null);
+                    smsManager.sendTextMessage(normalized, null, text, null, null);
                 }
                 sent++;
             }
@@ -136,7 +200,7 @@ public class GuardianNativePlugin extends Plugin {
         if (getPermissionState("phone") == PermissionState.GRANTED) {
             executePlaceCall(call);
         } else {
-            call.reject("Phone permission denied — enable in Settings to call automatically");
+            call.reject("Phone permission denied");
         }
     }
 
@@ -148,8 +212,10 @@ public class GuardianNativePlugin extends Plugin {
         }
 
         try {
+            String normalized = number.replaceAll("[^\\d+]", "");
             Intent intent = new Intent(Intent.ACTION_CALL);
-            intent.setData(Uri.parse("tel:" + number));
+            intent.setData(Uri.parse("tel:" + normalized));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             getActivity().startActivity(intent);
 
             JSObject ret = new JSObject();

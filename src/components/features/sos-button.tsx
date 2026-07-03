@@ -15,6 +15,8 @@ import { MapView } from "@/components/features/map-view";
 import {
   emergencyCommunicationService,
   emergencyLocationTracker,
+  communicationPermissions,
+  isGuardianNativeAvailable,
 } from "@/lib/communication";
 
 interface SOSButtonProps {
@@ -127,8 +129,14 @@ export function SOSButton({ countdownSeconds: propCountdown }: SOSButtonProps) {
         }
         if (result.call.success && result.call.method === "automatic") {
           toast.success("Calling primary contact automatically");
+        } else if (result.call.success && result.call.method === "native_dialer") {
+          toast.info("Dialer opened — tap call to reach primary contact");
         } else if (result.call.success) {
           toast.info("Opening phone app for primary contact");
+        }
+        const composerUsed = result.sms.some((s) => s.method === "native_composer");
+        if (composerUsed) {
+          toast.info("SMS app opened — tap send to message your contacts");
         }
       }
 
@@ -167,6 +175,18 @@ export function SOSButton({ countdownSeconds: propCountdown }: SOSButtonProps) {
       } catch {
         toast.warning("Activation saved locally — syncing when online");
       }
+
+      if (!test) {
+        const perms = await communicationPermissions.ensureEmergencyPermissions();
+        if (!perms.sms && !perms.phone) {
+          toast.warning(
+            isGuardianNativeAvailable()
+              ? "SMS/Phone permissions denied — will open SMS app and dialer instead"
+              : "Rebuild the Android app (cap sync) for emergency SMS and calls"
+          );
+        }
+      }
+
       await runNativeCommunications(session, test);
       startTracking(session.id);
     },

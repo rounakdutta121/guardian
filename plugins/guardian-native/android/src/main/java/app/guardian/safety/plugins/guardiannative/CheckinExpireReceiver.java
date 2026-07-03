@@ -25,22 +25,42 @@ public class CheckinExpireReceiver extends BroadcastReceiver {
 
         Log.i(TAG, "Check-in expire alarm fired for " + checkinId);
 
+        final PendingResult pendingResult = goAsync();
+        new Thread(() -> {
+            try {
+                startEscalation(context, checkinId);
+            } catch (Exception e) {
+                Log.e(TAG, "Expire receiver failed", e);
+                runEscalationInline(context, checkinId);
+            } finally {
+                pendingResult.finish();
+            }
+        }).start();
+    }
+
+    private void startEscalation(Context context, String checkinId) {
         Intent serviceIntent = new Intent(context, CheckinEscalationService.class);
         serviceIntent.putExtra("checkinId", checkinId);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(serviceIntent);
-        } else {
-            context.startService(serviceIntent);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent);
+            } else {
+                context.startService(serviceIntent);
+            }
+        } catch (IllegalStateException | SecurityException e) {
+            Log.e(TAG, "Foreground service blocked, running inline", e);
+            runEscalationInline(context, checkinId);
         }
+    }
 
-        Intent launch = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
-        if (launch != null) {
-            launch.addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK |
-                Intent.FLAG_ACTIVITY_CLEAR_TOP |
-                Intent.FLAG_ACTIVITY_SINGLE_TOP
-            );
-            context.startActivity(launch);
+    private void runEscalationInline(Context context, String checkinId) {
+        if (CheckinEscalationStore.wasExecuted(context, checkinId)) {
+            Log.i(TAG, "Escalation already executed for " + checkinId);
+            return;
         }
+        JSONObject plan = CheckinEscalationStore.loadPlan(context, checkinId);
+        if (plan == null) return;
+        boolean ok = CheckinEscalationExecutor.execute(context, plan);
+        Log.i(TAG, "Inline escalation done checkinId=" + checkinId + " ok=" + ok);
     }
 }

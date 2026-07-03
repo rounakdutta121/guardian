@@ -49,11 +49,11 @@
         <service
             android:name="app.guardian.safety.plugins.guardiannative.CheckinEscalationService"
             android:exported="false"
-            android:foregroundServiceType="dataSync|phoneCall" />
+            android:foregroundServiceType="dataSync|shortService" />
         <service
             android:name="app.guardian.safety.plugins.guardiannative.CheckinCallService"
             android:exported="false"
-            android:foregroundServiceType="dataSync|phoneCall" />
+            android:foregroundServiceType="dataSync|shortService" />
     </application>
 
     <!-- Permissions -->
@@ -71,5 +71,5 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SHORT_SERVICE" />
 </manifest>

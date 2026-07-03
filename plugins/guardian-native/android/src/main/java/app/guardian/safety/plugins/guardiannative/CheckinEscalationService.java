@@ -6,7 +6,6 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
-import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.util.Log;
@@ -28,27 +27,24 @@ public class CheckinEscalationService extends Service {
 
         createChannel();
         Notification notification = buildNotification("Alerting your emergency contacts…");
-        startForegroundWithType(notification);
+        if (!GuardianForegroundHelper.startForegroundSafe(this, NOTIFICATION_ID, notification)) {
+            Log.e(TAG, "Could not enter foreground — running escalation without FGS");
+            runEscalationWork(checkinId, null);
+            return START_NOT_STICKY;
+        }
 
         final NotificationManager notificationManager =
             (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
 
         new Thread(() -> {
             try {
-                JSONObject plan = CheckinEscalationStore.loadPlan(this, checkinId);
-                if (plan != null && !CheckinEscalationStore.wasExecuted(this, checkinId)) {
-                    boolean ok = CheckinEscalationExecutor.execute(
-                        this,
-                        plan,
-                        message -> notificationManager.notify(
-                            NOTIFICATION_ID,
-                            buildNotification(message)
-                        )
-                    );
-                    Log.i(TAG, "Foreground escalation done checkinId=" + checkinId + " ok=" + ok);
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Foreground escalation error", e);
+                runEscalationWork(
+                    checkinId,
+                    message -> notificationManager.notify(
+                        NOTIFICATION_ID,
+                        buildNotification(message)
+                    )
+                );
             } finally {
                 stopForeground(STOP_FOREGROUND_REMOVE);
                 stopSelf();
@@ -58,21 +54,21 @@ public class CheckinEscalationService extends Service {
         return START_NOT_STICKY;
     }
 
+    private void runEscalationWork(String checkinId, CheckinEscalationExecutor.ProgressListener listener) {
+        try {
+            JSONObject plan = CheckinEscalationStore.loadPlan(this, checkinId);
+            if (plan != null && !CheckinEscalationStore.wasExecuted(this, checkinId)) {
+                boolean ok = CheckinEscalationExecutor.execute(this, plan, listener);
+                Log.i(TAG, "Foreground escalation done checkinId=" + checkinId + " ok=" + ok);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Foreground escalation error", e);
+        }
+    }
+
     @Override
     public IBinder onBind(Intent intent) {
         return null;
-    }
-
-    private void startForegroundWithType(Notification notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            int type = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                type |= ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL;
-            }
-            startForeground(NOTIFICATION_ID, notification, type);
-        } else {
-            startForeground(NOTIFICATION_ID, notification);
-        }
     }
 
     private void createChannel() {
@@ -104,7 +100,7 @@ public class CheckinEscalationService extends Service {
         return new NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Check-in missed")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setSmallIcon(GuardianForegroundHelper.notificationIcon(this))
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setContentIntent(pendingLaunch)

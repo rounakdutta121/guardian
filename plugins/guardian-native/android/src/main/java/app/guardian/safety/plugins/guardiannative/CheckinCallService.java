@@ -6,7 +6,6 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
-import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.util.Log;
@@ -36,7 +35,11 @@ public class CheckinCallService extends Service {
             ? "Calling " + contactName + "…"
             : "Calling emergency contact…";
         Notification notification = buildNotification(label);
-        startForegroundWithType(notification);
+        if (!GuardianForegroundHelper.startForegroundSafe(this, NOTIFICATION_ID, notification)) {
+            Log.e(TAG, "Could not enter foreground for call");
+            stopSelf();
+            return START_NOT_STICKY;
+        }
 
         new Thread(() -> {
             try {
@@ -56,18 +59,6 @@ public class CheckinCallService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
-    }
-
-    private void startForegroundWithType(Notification notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            int type = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                type |= ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL;
-            }
-            startForeground(NOTIFICATION_ID, notification, type);
-        } else {
-            startForeground(NOTIFICATION_ID, notification);
-        }
     }
 
     private void createChannel() {
@@ -98,7 +89,7 @@ public class CheckinCallService extends Service {
         return new NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Check-in missed")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_menu_call)
+            .setSmallIcon(GuardianForegroundHelper.notificationIcon(this))
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setContentIntent(pendingLaunch)

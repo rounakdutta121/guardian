@@ -17,10 +17,15 @@ public class CheckinCallReceiver extends BroadcastReceiver {
         serviceIntent.putExtra("phone", phone);
         serviceIntent.putExtra("contactName", intent.getStringExtra("contactName"));
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(serviceIntent);
-        } else {
-            context.startService(serviceIntent);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent);
+            } else {
+                context.startService(serviceIntent);
+            }
+        } catch (IllegalStateException | SecurityException e) {
+            android.util.Log.e("GuardianCheckin", "Call service blocked, trying direct dial", e);
+            EmergencyCallHelper.placeCall(context, phone);
         }
     }
 }

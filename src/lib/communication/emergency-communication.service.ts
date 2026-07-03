@@ -3,6 +3,7 @@ import { communicationPermissions } from "./permissions.service";
 import { nativeSmsService } from "./sms.service";
 import { nativePhoneService } from "./phone.service";
 import { communicationQueue } from "./communication-queue.service";
+import { emergencyEscalationService, abortEscalation } from "./escalation.service";
 import { isAirplaneModeLikely } from "./platform";
 import type {
   CommunicationBatchResult,
@@ -11,11 +12,12 @@ import type {
   TimelineEvent,
 } from "./types";
 
-async function fetchSosContacts(): Promise<EmergencyContactTarget[]> {
+export { abortEscalation };
+
+async function fetchEmergencyContacts(): Promise<EmergencyContactTarget[]> {
   const res = await fetch("/api/emergency-contacts");
   if (!res.ok) throw new Error("Failed to load emergency contacts");
-  const contacts = (await res.json()) as EmergencyContactTarget[];
-  return contacts.filter((c) => c.notifyOnSos);
+  return (await res.json()) as EmergencyContactTarget[];
 }
 
 async function logTimelineEvent(
@@ -44,43 +46,45 @@ export class EmergencyCommunicationService {
     isTest: boolean;
     context: EmergencyMessageContext;
     contacts?: EmergencyContactTarget[];
+    /** SOS uses notifyOnSos contacts; check-in uses notifyOnCheckin. */
+    mode?: "sos" | "checkin";
   }): Promise<CommunicationBatchResult> {
+    const mode = options.mode ?? "sos";
     const timelineEvents: TimelineEvent[] = [];
     const now = new Date().toISOString();
 
-    if (options.isTest) {
-      const contacts = options.contacts ?? (await fetchSosContacts());
-      const message = buildEmergencySmsMessage(options.context);
-      const primary = nativePhoneService.selectPrimaryContact(contacts);
+    const allContacts = options.contacts ?? (await fetchEmergencyContacts());
+    const chain = emergencyEscalationService.prepareContacts(allContacts, mode);
 
+    if (options.isTest) {
+      const message = buildEmergencySmsMessage(options.context);
       timelineEvents.push({
-        event: "sms_simulated",
+        event: "escalation_simulated",
         timestamp: now,
         data: {
-          recipients: contacts.map((c) => c.phone),
+          mode,
+          contacts: chain.map((c) => ({
+            name: c.name,
+            phone: c.phone,
+            priority: c.priority,
+          })),
           preview: message.slice(0, 120),
         },
       });
-      timelineEvents.push({
-        event: "call_simulated",
-        timestamp: now,
-        data: primary
-          ? { name: primary.name, phone: primary.phone }
-          : { note: "No primary contact" },
+
+      const { sms, calls } = await emergencyEscalationService.runEscalation({
+        sessionId: options.sessionId,
+        isTest: true,
+        context: options.context,
+        contacts: allContacts,
+        mode,
+        onTimeline: (e) => timelineEvents.push(e),
       });
 
       return {
-        sms: contacts.map((c) => ({
-          phone: c.phone,
-          success: true,
-          method: "skipped" as const,
-        })),
-        call: {
-          success: true,
-          method: "skipped",
-          contactName: primary?.name,
-          phone: primary?.phone,
-        },
+        sms,
+        calls,
+        call: calls[0] ?? { success: false, method: "skipped" },
         timelineEvents,
       };
     }
@@ -98,36 +102,67 @@ export class EmergencyCommunicationService {
       timelineEvents.push({
         event: "airplane_mode_detected",
         timestamp: now,
-        data: { note: "SMS may open when signal returns" },
+        data: { note: "SMS/calls may queue until signal returns" },
       });
     }
 
-    const contacts = options.contacts ?? (await fetchSosContacts());
-    if (contacts.length === 0) {
+    if (chain.length === 0) {
       timelineEvents.push({
-        event: "no_sos_contacts",
+        event: "no_contacts_for_escalation",
         timestamp: now,
+        data: { mode },
       });
       await logTimelineEvent(options.sessionId, "communication_failed", {
         reason: "NO_CONTACTS",
+        mode,
       });
       return {
         sms: [],
+        calls: [],
         call: {
           success: false,
           method: "skipped",
           error: "NO_CONTACTS",
-          errorMessage: "No emergency contacts with SOS notifications enabled.",
+          errorMessage:
+            mode === "checkin"
+              ? "No contacts with check-in alerts enabled."
+              : "No emergency contacts with SOS notifications enabled.",
         },
         timelineEvents,
       };
     }
 
-    const phones = contacts.map((c) => c.phone);
-    let smsResults = await nativeSmsService.sendEmergencySms(
-      phones,
-      options.context
-    );
+    timelineEvents.push({
+      event: "escalation_started",
+      timestamp: now,
+      data: {
+        mode,
+        chain: chain.map((c, i) => ({
+          order: i + 1,
+          name: c.name,
+          phone: c.phone,
+          priority: c.priority,
+        })),
+      },
+    });
+
+    await logTimelineEvent(options.sessionId, "escalation_started", {
+      mode,
+      contactCount: chain.length,
+    });
+
+    const { sms: smsResults, calls: callResults } =
+      await emergencyEscalationService.runEscalation({
+        sessionId: options.sessionId,
+        isTest: false,
+        context: options.context,
+        contacts: allContacts,
+        mode,
+        onTimeline: (e) => {
+          timelineEvents.push(e);
+          void logTimelineEvent(options.sessionId, e.event, e.data);
+        },
+      });
 
     for (const result of smsResults) {
       if (!result.success) {
@@ -137,63 +172,36 @@ export class EmergencyCommunicationService {
           payload: {
             phone: result.phone,
             context: options.context,
+            priority: result.priority,
           },
         });
       }
     }
 
-    const smsSent = smsResults.filter((r) => r.success).length;
-    const smsAutomatic = smsResults.some((r) => r.method === "automatic");
-    timelineEvents.push({
-      event: "sms_initiated",
-      timestamp: new Date().toISOString(),
-      data: {
-        total: smsResults.length,
-        sent: smsSent,
-        failed: smsResults.length - smsSent,
-        method: smsAutomatic ? "automatic_sim_sms" : "native_device_sms",
-      },
-    });
-
-    await logTimelineEvent(options.sessionId, "sms_initiated", {
-      total: smsResults.length,
-      sent: smsSent,
-      recipients: phones,
-    });
-
-    const callResult = await nativePhoneService.callPrimaryContact(contacts);
-
-    if (!callResult.success) {
-      communicationQueue.enqueue({
-        type: "call",
-        sessionId: options.sessionId,
-        payload: {
-          phone: callResult.phone,
-        },
-      });
+    for (const result of callResults) {
+      if (!result.success && result.phone) {
+        communicationQueue.enqueue({
+          type: "call",
+          sessionId: options.sessionId,
+          payload: { phone: result.phone, priority: result.priority },
+        });
+      }
     }
 
-    timelineEvents.push({
-      event: callResult.success ? "call_initiated" : "call_failed",
-      timestamp: new Date().toISOString(),
-      data: {
-        contact: callResult.contactName,
-        phone: callResult.phone,
-        method: callResult.method === "automatic" ? "automatic_sim_call" : "native_dialer",
-        error: callResult.error,
-      },
-    });
+    const primaryCall =
+      callResults.find((c) => c.success) ??
+      callResults[0] ?? {
+        success: false,
+        method: "skipped" as const,
+        error: "NO_CONTACTS" as const,
+      };
 
-    await logTimelineEvent(
-      options.sessionId,
-      callResult.success ? "call_initiated" : "call_failed",
-      {
-        contact: callResult.contactName,
-        phone: callResult.phone,
-      }
-    );
-
-    return { sms: smsResults, call: callResult, timelineEvents };
+    return {
+      sms: smsResults,
+      calls: callResults,
+      call: primaryCall,
+      timelineEvents,
+    };
   }
 
   async retryQueuedCommunications(): Promise<number> {

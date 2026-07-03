@@ -18,6 +18,7 @@ import {
   emergencyLocationTracker,
   communicationPermissions,
   isGuardianNativeAvailable,
+  abortEscalation,
 } from "@/lib/communication";
 import { shouldAutoOpenEmergencyOverlay } from "@/lib/services/emergency-session-lifecycle";
 
@@ -127,18 +128,20 @@ export function SOSButton({ countdownSeconds: propCountdown }: SOSButtonProps) {
         await emergencyCommunicationService.executeEmergencyCommunications({
           sessionId: session.id,
           isTest: test,
+          mode: "sos",
           context: {
             mapsUrl: session.mapsUrl ?? null,
             latitude: session.latitude ?? latitude ?? null,
             longitude: session.longitude ?? longitude ?? null,
             batteryLevel: battery,
+            reason: "sos",
           },
         });
 
       setCommStatus({
         smsSent: result.sms.filter((s) => s.success).length,
         smsTotal: result.sms.length,
-        callInitiated: result.call.success,
+        callInitiated: result.calls.some((c) => c.success),
       });
 
       if (!test) {
@@ -158,6 +161,11 @@ export function SOSButton({ countdownSeconds: propCountdown }: SOSButtonProps) {
         const composerUsed = result.sms.some((s) => s.method === "native_composer");
         if (composerUsed) {
           toast.info("SMS app opened — tap send to message your contacts");
+        }
+        if (result.calls.length > 1) {
+          toast.info(
+            `Escalation: ${result.calls.length} contacts will be called in priority order`
+          );
         }
       }
 
@@ -340,6 +348,7 @@ export function SOSButton({ countdownSeconds: propCountdown }: SOSButtonProps) {
   };
 
   const clearLocalEmergency = () => {
+    abortEscalation();
     emergencyLocationTracker.stop();
     reset();
     setSessionData(null);
@@ -474,8 +483,10 @@ export function SOSButton({ countdownSeconds: propCountdown }: SOSButtonProps) {
                     </p>
                     {commStatus && !isTest && (
                       <p className="mt-2 text-xs text-white/60">
-                        SMS: {commStatus.smsSent}/{commStatus.smsTotal} opened ·{" "}
-                        {commStatus.callInitiated ? "Call initiated" : "Call queued"}
+                        SMS: {commStatus.smsSent}/{commStatus.smsTotal} sent ·{" "}
+                        {commStatus.callInitiated
+                          ? "Calls escalating by priority"
+                          : "Calls queued"}
                       </p>
                     )}
                   </div>

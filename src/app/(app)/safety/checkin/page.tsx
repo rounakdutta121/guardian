@@ -20,6 +20,7 @@ import { getBatteryLevel } from "@/lib/location/helpers";
 import {
   emergencyCommunicationService,
   emergencyLocationTracker,
+  abortEscalation,
 } from "@/lib/communication";
 import { generateMapsUrl } from "@/lib/utils";
 
@@ -55,16 +56,70 @@ export default function SafeCheckinPage() {
     if (active) setActiveCheckin(active);
   }, [checkins]);
 
+  const runCheckinEscalation = async (
+    session: { id: string },
+    reason: "checkin_need_help" | "checkin_missed"
+  ) => {
+    const { latitude, longitude, accuracy } = useLocationStore.getState();
+    const battery = await getBatteryLevel();
+    const mapsUrl =
+      latitude && longitude ? generateMapsUrl(latitude, longitude) : null;
+
+    await emergencyCommunicationService.executeEmergencyCommunications({
+      sessionId: session.id,
+      isTest: false,
+      mode: "checkin",
+      context: {
+        mapsUrl,
+        latitude: latitude ?? null,
+        longitude: longitude ?? null,
+        batteryLevel: battery,
+        reason,
+      },
+    });
+
+    emergencyLocationTracker.start(
+      session.id,
+      () => {
+        const loc = useLocationStore.getState();
+        return {
+          latitude: loc.latitude,
+          longitude: loc.longitude,
+          accuracy: loc.accuracy,
+        };
+      },
+      getBatteryLevel
+    );
+  };
+
   const handleExpire = useCallback(async () => {
     if (!activeCheckin) return;
     setShowPrompt(true);
-    await fetch(`/api/checkin/${activeCheckin.id}`, {
+    const { latitude, longitude, accuracy } = useLocationStore.getState();
+    const battery = await getBatteryLevel();
+    const res = await fetch(`/api/checkin/${activeCheckin.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "expire" }),
+      body: JSON.stringify({
+        action: "expire",
+        latitude: latitude ?? undefined,
+        longitude: longitude ?? undefined,
+        accuracy: accuracy ?? undefined,
+        batteryLevel: battery ?? undefined,
+      }),
     });
     queryClient.invalidateQueries({ queryKey: ["checkins"] });
     toast.warning("Check-in timer expired");
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.emergencySession?.id) {
+        await runCheckinEscalation(data.emergencySession, "checkin_missed");
+        toast.error(
+          "Escalating to check-in contacts by priority — SMS then calls"
+        );
+      }
+    }
   }, [activeCheckin, queryClient]);
 
   useEffect(() => {
@@ -142,34 +197,12 @@ export default function SafeCheckinPage() {
       return;
     }
     const session = await res.json();
-    const mapsUrl =
-      latitude && longitude ? generateMapsUrl(latitude, longitude) : null;
-    await emergencyCommunicationService.executeEmergencyCommunications({
-      sessionId: session.id,
-      isTest: false,
-      context: {
-        mapsUrl,
-        latitude: latitude ?? null,
-        longitude: longitude ?? null,
-        batteryLevel: battery,
-      },
-    });
-    emergencyLocationTracker.start(
-      session.id,
-      () => {
-        const loc = useLocationStore.getState();
-        return {
-          latitude: loc.latitude,
-          longitude: loc.longitude,
-          accuracy: loc.accuracy,
-        };
-      },
-      getBatteryLevel
-    );
+    const emergencySession = session.emergencySession ?? session;
+    await runCheckinEscalation(emergencySession, "checkin_need_help");
     setActiveCheckin(null);
     setShowPrompt(false);
     queryClient.invalidateQueries({ queryKey: ["checkins"] });
-    toast.error("Emergency activated — native SMS & call initiated");
+    toast.error("Need help — escalating to check-in contacts by priority");
   };
 
   const cancelCheckin = async () => {

@@ -14,10 +14,24 @@ export function buildEmergencySmsMessage(context: EmergencyMessageContext): stri
       ? `${context.batteryLevel}%`
       : "Unknown";
 
+  const header =
+    context.reason === "checkin_missed"
+      ? "🚨 CHECK-IN MISSED — POSSIBLE EMERGENCY"
+      : context.reason === "checkin_need_help"
+        ? "🚨 CHECK-IN — I NEED HELP"
+        : "🚨 EMERGENCY ALERT";
+
+  const intro =
+    context.reason === "checkin_missed"
+      ? "I did not confirm my safe check-in in time."
+      : context.reason === "checkin_need_help"
+        ? "I pressed Need Help during my safe check-in."
+        : "I may be in danger.";
+
   return [
-    "🚨 EMERGENCY ALERT",
+    header,
     "",
-    "I may be in danger.",
+    intro,
     "",
     "Current Location:",
     locationUrl,

@@ -3,6 +3,7 @@ export type {
   CommunicationErrorCode,
   EmergencyContactTarget,
   EmergencyMessageContext,
+  EmergencyAlertReason,
   SmsSendResult,
   CallResult,
   CommunicationBatchResult,
@@ -47,6 +48,24 @@ export {
   EmergencyCommunicationService,
   emergencyCommunicationService,
 } from "./emergency-communication.service";
+
+export {
+  EmergencyEscalationService,
+  emergencyEscalationService,
+  abortEscalation,
+  resetEscalationAbort,
+  isEscalationAborted,
+} from "./escalation.service";
+
+export {
+  sortContactsForEscalation,
+  filterContactsForMode,
+} from "./contact-priority";
+
+export {
+  ESCALATION_SMS_DELAY_MS,
+  ESCALATION_CALL_WAIT_MS,
+} from "./escalation.config";
 
 export {
   canUseAutomaticEmergencyComms,

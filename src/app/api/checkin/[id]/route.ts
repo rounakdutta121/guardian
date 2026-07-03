@@ -43,9 +43,17 @@ export async function PATCH(
         result = await safeCheckinService.needHelp(id, session.user.id, location);
         break;
       }
-      case "expire":
-        result = await safeCheckinService.expireCheckin(id, session.user.id);
+      case "expire": {
+        const location = body.latitude
+          ? locationSchema.parse(body)
+          : undefined;
+        result = await safeCheckinService.expireCheckin(
+          id,
+          session.user.id,
+          location
+        );
         break;
+      }
       case "cancel":
         result = await safeCheckinRepo.update(id, session.user.id, {
           status: "cancelled",

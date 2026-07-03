@@ -512,7 +512,16 @@ export class SafeCheckinService {
     return checkin;
   }
 
-  async expireCheckin(checkinId: string, userId: string) {
+  async expireCheckin(
+    checkinId: string,
+    userId: string,
+    location?: {
+      latitude?: number;
+      longitude?: number;
+      accuracy?: number;
+      batteryLevel?: number;
+    }
+  ) {
     const checkin = await safeCheckinRepo.findById(checkinId, userId);
     if (!checkin || checkin.status !== "active") return null;
 
@@ -532,7 +541,28 @@ export class SafeCheckinService {
       data: { checkinId, route: "/safety/checkin" },
     });
 
-    return checkin;
+    let emergencySession = null;
+    if (checkin.notifyContacts) {
+      const engine = new EmergencyEngineService();
+      await engine.expireStaleSessions(userId);
+      try {
+        emergencySession = await engine.startEmergency(userId, {
+          trigger: "safe_checkin",
+          isTest: false,
+          latitude: location?.latitude,
+          longitude: location?.longitude,
+          accuracy: location?.accuracy,
+          batteryLevel: location?.batteryLevel,
+        });
+        await safeCheckinRepo.update(checkinId, userId, {
+          emergencySessionId: emergencySession.id,
+        });
+      } catch {
+        // Active emergency may already exist — still return missed checkin
+      }
+    }
+
+    return { checkin, emergencySession };
   }
 
   async needHelp(
@@ -547,6 +577,7 @@ export class SafeCheckinService {
   ) {
     await safeCheckinRepo.update(checkinId, userId, { status: "need_help" });
     const engine = new EmergencyEngineService();
+    await engine.expireStaleSessions(userId);
     const session = await engine.startEmergency(userId, {
       trigger: "safe_checkin",
       isTest: false,

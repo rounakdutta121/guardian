@@ -25,7 +25,13 @@ export interface EmergencyContactTarget {
   priority: number;
   isFavorite: boolean;
   notifyOnSos: boolean;
+  notifyOnCheckin: boolean;
 }
+
+export type EmergencyAlertReason =
+  | "sos"
+  | "checkin_need_help"
+  | "checkin_missed";
 
 export interface EmergencyMessageContext {
   mapsUrl: string | null;
@@ -33,12 +39,16 @@ export interface EmergencyMessageContext {
   longitude: number | null;
   batteryLevel: number | null;
   timestamp?: Date;
+  reason?: EmergencyAlertReason;
 }
 
 export interface SmsSendResult {
   phone: string;
   success: boolean;
   method: "automatic" | "native_composer" | "skipped";
+  contactName?: string;
+  priority?: number;
+  escalationIndex?: number;
   error?: CommunicationErrorCode;
   errorMessage?: string;
 }
@@ -48,6 +58,8 @@ export interface CallResult {
   method: "automatic" | "native_dialer" | "skipped";
   contactName?: string;
   phone?: string;
+  priority?: number;
+  escalationIndex?: number;
   error?: CommunicationErrorCode;
   errorMessage?: string;
 }
@@ -55,6 +67,7 @@ export interface CallResult {
 export interface CommunicationBatchResult {
   sms: SmsSendResult[];
   call: CallResult;
+  calls: CallResult[];
   timelineEvents: TimelineEvent[];
 }
 

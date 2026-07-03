@@ -31,6 +31,12 @@ export class GuardianNativeWeb extends WebPlugin {
     async cancelCheckinEscalation() {
         return { cancelled: false };
     }
+    async clearCheckinEscalationPlan() {
+        return { cleared: false };
+    }
+    async runStoredCheckinEscalation() {
+        return { executed: false, reason: "WEB" };
+    }
     async consumePendingCheckinExpire() {
         return null;
     }

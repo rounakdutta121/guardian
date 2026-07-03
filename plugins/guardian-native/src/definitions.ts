@@ -81,6 +81,20 @@ export interface GuardianNativePlugin {
     notificationId: number;
   }): Promise<{ cancelled: boolean }>;
 
+  clearCheckinEscalationPlan(options: {
+    checkinId: string;
+    notificationId: number;
+  }): Promise<{ cleared: boolean }>;
+
+  runStoredCheckinEscalation(options: {
+    checkinId: string;
+  }): Promise<{
+    executed: boolean;
+    alreadyRan?: boolean;
+    startedService?: boolean;
+    reason?: string;
+  }>;
+
   consumePendingCheckinExpire(): Promise<{ checkinId: string } | null>;
 
   wasCheckinEscalationExecuted(options: {

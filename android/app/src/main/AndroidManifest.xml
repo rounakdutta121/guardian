@@ -33,6 +33,23 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <receiver
+            android:name="app.guardian.safety.plugins.guardiannative.CheckinExpireReceiver"
+            android:exported="false"
+            android:enabled="true" />
+        <receiver
+            android:name="app.guardian.safety.plugins.guardiannative.CheckinCallReceiver"
+            android:exported="false"
+            android:enabled="true" />
+        <receiver
+            android:name="app.guardian.safety.plugins.guardiannative.FakeCallAlarmReceiver"
+            android:exported="false"
+            android:enabled="true" />
+        <service
+            android:name="app.guardian.safety.plugins.guardiannative.CheckinEscalationService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
     <!-- Permissions -->
@@ -48,4 +65,6 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 </manifest>

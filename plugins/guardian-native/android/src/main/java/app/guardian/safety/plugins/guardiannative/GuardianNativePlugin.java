@@ -20,6 +20,7 @@ import com.getcapacitor.annotation.PermissionCallback;
 import java.util.ArrayList;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import android.util.Log;
 
 @CapacitorPlugin(
     name = "GuardianNative",
@@ -29,6 +30,79 @@ import org.json.JSONObject;
     }
 )
 public class GuardianNativePlugin extends Plugin {
+    private static final String TAG = "GuardianNative";
+
+    private void cancelCheckinAlarms(Context context, int notificationId) {
+        Intent intent = new Intent(context, CheckinExpireReceiver.class);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(
+            context,
+            notificationId,
+            intent,
+            flags
+        );
+
+        AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (alarmManager != null) {
+            alarmManager.cancel(pendingIntent);
+        }
+        pendingIntent.cancel();
+
+        for (int i = 0; i < 20; i++) {
+            Intent callIntent = new Intent(context, CheckinCallReceiver.class);
+            PendingIntent callPending = PendingIntent.getBroadcast(
+                context,
+                notificationId * 100 + i + 1,
+                callIntent,
+                flags
+            );
+            if (alarmManager != null) {
+                alarmManager.cancel(callPending);
+            }
+            callPending.cancel();
+        }
+    }
+
+    private void scheduleCheckinAlarm(Context context, int notificationId, long triggerAt, String checkinId) throws Exception {
+        Intent intent = new Intent(context, CheckinExpireReceiver.class);
+        intent.putExtra("checkinId", checkinId);
+
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(
+            context,
+            notificationId,
+            intent,
+            flags
+        );
+
+        AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (alarmManager == null) {
+            throw new Exception("AlarmManager unavailable");
+        }
+
+        Intent launch = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
+        PendingIntent showIntent = null;
+        if (launch != null) {
+            showIntent = PendingIntent.getActivity(context, notificationId + 50000, launch, flags);
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && showIntent != null) {
+            AlarmManager.AlarmClockInfo alarmClockInfo = new AlarmManager.AlarmClockInfo(triggerAt, showIntent);
+            alarmManager.setAlarmClock(alarmClockInfo, pendingIntent);
+            Log.i(TAG, "Scheduled alarm clock for check-in " + checkinId + " at " + triggerAt);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
+        } else {
+            alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
+        }
+    }
 
     @PluginMethod
     public void requestEmergencyPermissions(PluginCall call) {
@@ -379,38 +453,14 @@ public class GuardianNativePlugin extends Plugin {
                 contactsJson
             );
 
-            Context context = getContext();
-            Intent intent = new Intent(context, CheckinExpireReceiver.class);
-            intent.putExtra("checkinId", checkinId);
-
-            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                flags |= PendingIntent.FLAG_IMMUTABLE;
-            }
-
-            PendingIntent pendingIntent = PendingIntent.getBroadcast(
-                context,
-                notificationId,
-                intent,
-                flags
-            );
-
-            AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-            if (alarmManager == null) {
-                call.reject("AlarmManager unavailable");
-                return;
-            }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
-            } else {
-                alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
-            }
+            scheduleCheckinAlarm(getContext(), notificationId, triggerAt, checkinId);
 
             JSObject ret = new JSObject();
             ret.put("scheduled", true);
+            ret.put("contactCount", contactsJson.length());
             call.resolve(ret);
         } catch (Exception e) {
+            Log.e(TAG, "scheduleCheckinEscalation failed", e);
             call.reject("Failed to schedule check-in escalation: " + e.getMessage());
         }
     }
@@ -426,46 +476,82 @@ public class GuardianNativePlugin extends Plugin {
         }
 
         try {
-            Context context = getContext();
-            CheckinEscalationStore.clearPlan(context, checkinId);
-
-            Intent intent = new Intent(context, CheckinExpireReceiver.class);
-            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                flags |= PendingIntent.FLAG_IMMUTABLE;
-            }
-            PendingIntent pendingIntent = PendingIntent.getBroadcast(
-                context,
-                notificationId,
-                intent,
-                flags
-            );
-
-            AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-            if (alarmManager != null) {
-                alarmManager.cancel(pendingIntent);
-            }
-            pendingIntent.cancel();
-
-            for (int i = 0; i < 20; i++) {
-                Intent callIntent = new Intent(context, CheckinCallReceiver.class);
-                PendingIntent callPending = PendingIntent.getBroadcast(
-                    context,
-                    notificationId * 100 + i + 1,
-                    callIntent,
-                    flags
-                );
-                if (alarmManager != null) {
-                    alarmManager.cancel(callPending);
-                }
-                callPending.cancel();
-            }
+            cancelCheckinAlarms(getContext(), notificationId);
 
             JSObject ret = new JSObject();
             ret.put("cancelled", true);
             call.resolve(ret);
         } catch (Exception e) {
             call.reject("Failed to cancel check-in escalation: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void clearCheckinEscalationPlan(PluginCall call) {
+        String checkinId = call.getString("checkinId");
+        Integer notificationId = call.getInt("notificationId");
+
+        if (checkinId == null) {
+            call.reject("checkinId is required");
+            return;
+        }
+
+        try {
+            if (notificationId != null) {
+                cancelCheckinAlarms(getContext(), notificationId);
+            }
+            CheckinEscalationStore.clearPlan(getContext(), checkinId);
+
+            JSObject ret = new JSObject();
+            ret.put("cleared", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to clear check-in plan: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void runStoredCheckinEscalation(PluginCall call) {
+        String checkinId = call.getString("checkinId");
+        if (checkinId == null) {
+            call.reject("checkinId is required");
+            return;
+        }
+
+        try {
+            Context context = getContext();
+            if (CheckinEscalationStore.wasExecuted(context, checkinId)) {
+                JSObject ret = new JSObject();
+                ret.put("executed", true);
+                ret.put("alreadyRan", true);
+                call.resolve(ret);
+                return;
+            }
+
+            JSONObject plan = CheckinEscalationStore.loadPlan(context, checkinId);
+            if (plan == null) {
+                JSObject ret = new JSObject();
+                ret.put("executed", false);
+                ret.put("reason", "NO_PLAN");
+                call.resolve(ret);
+                return;
+            }
+
+            Intent serviceIntent = new Intent(context, CheckinEscalationService.class);
+            serviceIntent.putExtra("checkinId", checkinId);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent);
+            } else {
+                context.startService(serviceIntent);
+            }
+
+            JSObject ret = new JSObject();
+            ret.put("executed", true);
+            ret.put("startedService", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            Log.e(TAG, "runStoredCheckinEscalation failed", e);
+            call.reject("Failed to run stored check-in escalation: " + e.getMessage());
         }
     }
 

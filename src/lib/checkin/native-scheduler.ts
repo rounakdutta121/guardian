@@ -1,4 +1,6 @@
 import { Geolocation } from "@capacitor/geolocation";
+import { LocalNotifications } from "@capacitor/local-notifications";
+import { toast } from "sonner";
 import { useLocationStore } from "@/stores";
 import { getBatteryLevel } from "@/lib/location/helpers";
 import { generateMapsUrl } from "@/lib/utils";
@@ -9,9 +11,8 @@ import {
 } from "@/lib/communication/contact-priority";
 import type { EmergencyContactTarget } from "@/lib/communication/types";
 import { isCapacitorNative } from "@/lib/communication/platform";
+import { communicationPermissions } from "@/lib/communication/permissions.service";
 import { GuardianNative, isGuardianNativeAvailable } from "guardian-native";
-import { LocalNotifications } from "@capacitor/local-notifications";
-import { ensureFakeCallNotificationPermissions } from "@/lib/fake-call/local-scheduler";
 import {
   CHECKIN_CHANNEL_ID,
   checkinIdToNotificationId,
@@ -20,6 +21,29 @@ import {
 } from "./types";
 
 let channelReady = false;
+
+async function ensureExactAlarmPermission(): Promise<void> {
+  if (!isCapacitorNative()) return;
+  try {
+    const setting = await LocalNotifications.checkExactNotificationSetting();
+    if (setting.exact_alarm === "granted") return;
+    await LocalNotifications.changeExactNotificationSetting();
+  } catch {
+    // ignore
+  }
+}
+
+async function ensureNotificationPermissions(): Promise<boolean> {
+  if (!isCapacitorNative()) return false;
+  try {
+    const current = await LocalNotifications.checkPermissions();
+    if (current.display === "granted") return true;
+    const requested = await LocalNotifications.requestPermissions();
+    return requested.display === "granted";
+  } catch {
+    return false;
+  }
+}
 
 async function ensureCheckinChannel(): Promise<void> {
   if (!isCapacitorNative() || channelReady) return;
@@ -87,18 +111,28 @@ async function buildCheckinMissedMessage(): Promise<string> {
 
 export async function scheduleCheckinBackgroundEscalation(
   checkin: ActiveCheckinSchedule
-): Promise<void> {
+): Promise<boolean> {
   if (!isCapacitorNative() || !checkin.notifyContacts || checkin.status !== "active") {
-    return;
+    return false;
+  }
+
+  if (!isGuardianNativeAvailable()) {
+    toast.error("Native plugin missing — rebuild the Android app (cap sync)");
+    return false;
   }
 
   const expiresAt = new Date(checkin.expiresAt);
-  if (expiresAt.getTime() <= Date.now()) return;
+  if (expiresAt.getTime() <= Date.now()) return false;
 
   const contacts = await fetchCheckinContacts();
-  if (contacts.length === 0) return;
+  if (contacts.length === 0) {
+    toast.error("No check-in contacts — enable Notify on check-in for at least one contact");
+    return false;
+  }
 
-  await ensureFakeCallNotificationPermissions();
+  await communicationPermissions.ensureEmergencyPermissions();
+  await ensureNotificationPermissions();
+  await ensureExactAlarmPermission();
   await ensureCheckinChannel();
 
   const notificationId = checkinIdToNotificationId(checkin.id);
@@ -110,46 +144,52 @@ export async function scheduleCheckinBackgroundEscalation(
     // ignore
   }
 
-  await LocalNotifications.schedule({
-    notifications: [
-      {
-        id: notificationId,
-        title: "Check-in missed",
-        body: "Safe check-in expired — alerting your contacts",
-        channelId: CHECKIN_CHANNEL_ID,
-        schedule: {
-          at: expiresAt,
-          allowWhileIdle: true,
+  try {
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          id: notificationId,
+          title: "Check-in missed",
+          body: "Safe check-in expired — alerting your contacts",
+          channelId: CHECKIN_CHANNEL_ID,
+          schedule: {
+            at: expiresAt,
+            allowWhileIdle: true,
+          },
+          ongoing: true,
+          autoCancel: false,
+          extra: {
+            kind: "checkin_expire",
+            checkinId: checkin.id,
+          },
         },
-        ongoing: true,
-        autoCancel: false,
-        extra: {
-          kind: "checkin_expire",
-          checkinId: checkin.id,
-        },
-      },
-    ],
-  });
+      ],
+    });
+  } catch (error) {
+    console.error("[Checkin] Local notification schedule failed:", error);
+  }
 
-  if (isGuardianNativeAvailable()) {
-    try {
-      await GuardianNative.scheduleCheckinEscalation({
-        notificationId,
-        checkinId: checkin.id,
-        triggerAt: expiresAt.getTime(),
-        message,
-        contacts,
-      });
-    } catch (error) {
-      console.error("[Checkin] Native escalation schedule failed:", error);
-    }
+  try {
+    const result = await GuardianNative.scheduleCheckinEscalation({
+      notificationId,
+      checkinId: checkin.id,
+      triggerAt: expiresAt.getTime(),
+      message,
+      contacts,
+    });
+    toast.success(
+      `Background alert scheduled for ${contacts.length} contact(s) at ${expiresAt.toLocaleTimeString()}`
+    );
+    return Boolean(result.scheduled);
+  } catch (error) {
+    console.error("[Checkin] Native escalation schedule failed:", error);
+    toast.error("Failed to schedule background check-in alert — rebuild the app");
+    return false;
   }
 }
 
-export async function cancelCheckinBackgroundEscalation(
-  checkinId: string
-): Promise<void> {
-  if (!isCapacitorNative()) return;
+export async function cancelCheckinAlarmsOnly(checkinId: string): Promise<void> {
+  if (!isCapacitorNative() || !isGuardianNativeAvailable()) return;
 
   const notificationId = checkinIdToNotificationId(checkinId);
 
@@ -159,15 +199,54 @@ export async function cancelCheckinBackgroundEscalation(
     // ignore
   }
 
+  try {
+    await GuardianNative.cancelCheckinEscalation({
+      checkinId,
+      notificationId,
+    });
+  } catch {
+    // ignore
+  }
+}
+
+export async function clearCheckinBackgroundEscalation(
+  checkinId: string
+): Promise<void> {
+  if (!isCapacitorNative()) return;
+
+  const notificationId = checkinIdToNotificationId(checkinId);
+
   if (isGuardianNativeAvailable()) {
     try {
-      await GuardianNative.cancelCheckinEscalation({
+      await GuardianNative.clearCheckinEscalationPlan({
         checkinId,
         notificationId,
       });
     } catch {
-      // ignore
+      await cancelCheckinAlarmsOnly(checkinId);
     }
+  } else {
+    await cancelCheckinAlarmsOnly(checkinId);
+  }
+}
+
+/** @deprecated use cancelCheckinAlarmsOnly or clearCheckinBackgroundEscalation */
+export async function cancelCheckinBackgroundEscalation(
+  checkinId: string
+): Promise<void> {
+  await clearCheckinBackgroundEscalation(checkinId);
+}
+
+export async function runStoredNativeCheckinEscalation(
+  checkinId: string
+): Promise<boolean> {
+  if (!isGuardianNativeAvailable()) return false;
+  try {
+    const result = await GuardianNative.runStoredCheckinEscalation({ checkinId });
+    return Boolean(result.executed);
+  } catch (error) {
+    console.error("[Checkin] runStoredCheckinEscalation failed:", error);
+    return false;
   }
 }
 

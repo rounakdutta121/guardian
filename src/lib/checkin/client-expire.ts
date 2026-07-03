@@ -11,7 +11,9 @@ import {
 import {
   refreshLocationForEscalation,
   wasNativeCheckinEscalationExecuted,
-  cancelCheckinBackgroundEscalation,
+  cancelCheckinAlarmsOnly,
+  clearCheckinBackgroundEscalation,
+  runStoredNativeCheckinEscalation,
 } from "@/lib/checkin/native-scheduler";
 
 export type CheckinEscalationReason = "checkin_need_help" | "checkin_missed";
@@ -157,7 +159,8 @@ export async function expireCheckinOnClient(
   expiringCheckinIds.add(checkinId);
 
   try {
-    await cancelCheckinBackgroundEscalation(checkinId);
+    const nativeAlreadyQueued = await runStoredNativeCheckinEscalation(checkinId);
+    await cancelCheckinAlarmsOnly(checkinId);
     await refreshLocationForEscalation();
     const { latitude, longitude, accuracy } = useLocationStore.getState();
     const battery = await getBatteryLevel();
@@ -181,7 +184,8 @@ export async function expireCheckinOnClient(
     const data = await res.json();
     const emergencySession = data.emergencySession ?? null;
 
-    const nativeAlreadyRan = await wasNativeCheckinEscalationExecuted(checkinId);
+    const nativeAlreadyRan =
+      nativeAlreadyQueued || (await wasNativeCheckinEscalationExecuted(checkinId));
 
     if (emergencySession?.id && !options?.skipEscalation && !nativeAlreadyRan) {
       await runCheckinEscalation(emergencySession, "checkin_missed");
@@ -199,6 +203,10 @@ export async function expireCheckinOnClient(
         },
         getBatteryLevel
       );
+    }
+
+    if (nativeAlreadyRan || emergencySession?.id) {
+      await clearCheckinBackgroundEscalation(checkinId);
     }
 
     return { emergencySession };

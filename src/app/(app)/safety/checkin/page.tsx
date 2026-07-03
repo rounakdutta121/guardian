@@ -25,7 +25,7 @@ import {
 } from "@/lib/checkin/client-expire";
 import {
   scheduleCheckinBackgroundEscalation,
-  cancelCheckinBackgroundEscalation,
+  clearCheckinBackgroundEscalation,
 } from "@/lib/checkin/native-scheduler";
 
 const PRESETS = [
@@ -135,7 +135,7 @@ export default function SafeCheckinPage() {
 
   const confirmSafe = async () => {
     if (!activeCheckin) return;
-    await cancelCheckinBackgroundEscalation(activeCheckin.id);
+    await clearCheckinBackgroundEscalation(activeCheckin.id);
     await fetch(`/api/checkin/${activeCheckin.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -180,7 +180,7 @@ export default function SafeCheckinPage() {
 
   const cancelCheckin = async () => {
     if (!activeCheckin) return;
-    await cancelCheckinBackgroundEscalation(activeCheckin.id);
+    await clearCheckinBackgroundEscalation(activeCheckin.id);
     await fetch(`/api/checkin/${activeCheckin.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

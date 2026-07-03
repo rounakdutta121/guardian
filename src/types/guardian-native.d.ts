@@ -59,11 +59,23 @@ declare module "guardian-native" {
       triggerAt: number;
       message: string;
       contacts: Array<{ name: string; phone: string }>;
-    }): Promise<{ scheduled: boolean }>;
+    }): Promise<{ scheduled: boolean; contactCount?: number }>;
     cancelCheckinEscalation(options: {
       checkinId: string;
       notificationId: number;
     }): Promise<{ cancelled: boolean }>;
+    clearCheckinEscalationPlan(options: {
+      checkinId: string;
+      notificationId: number;
+    }): Promise<{ cleared: boolean }>;
+    runStoredCheckinEscalation(options: {
+      checkinId: string;
+    }): Promise<{
+      executed: boolean;
+      alreadyRan?: boolean;
+      startedService?: boolean;
+      reason?: string;
+    }>;
     consumePendingCheckinExpire(): Promise<{ checkinId: string } | null>;
     wasCheckinEscalationExecuted(options: {
       checkinId: string;

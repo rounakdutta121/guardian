@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 import { Home, Shield, Activity, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
+import { useFakeCallStore } from "@/stores";
+import { isCapacitorNative } from "@/lib/communication/platform";
 
 const navItems = [
   { href: "/home", label: "Home", icon: Home },
@@ -15,6 +17,11 @@ const navItems = [
 
 export function BottomNav() {
   const pathname = usePathname();
+  const isRinging = useFakeCallStore((s) => s.isRinging);
+
+  if (isRinging && isCapacitorNative()) {
+    return null;
+  }
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 glass border-t border-border/50 pb-[env(safe-area-inset-bottom)]">

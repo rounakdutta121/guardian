@@ -102,3 +102,9 @@ body {
     box-shadow: 0 0 0 20px rgba(239, 68, 68, 0);
   }
 }
+
+/* Block interaction with app content during native fake call */
+html.guardian-fake-call-lock body > *:not([data-fake-call-portal]) {
+  pointer-events: none;
+  user-select: none;
+}

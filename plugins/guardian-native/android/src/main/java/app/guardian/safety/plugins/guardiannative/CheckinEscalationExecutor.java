@@ -25,6 +25,12 @@ final class CheckinEscalationExecutor {
         return execute(context, plan, null);
     }
 
+    private static void notifyProgress(ProgressListener listener, String message) {
+        if (listener != null) {
+            listener.onProgress(message);
+        }
+    }
+
     static boolean execute(Context context, JSONObject plan, ProgressListener listener) {
         if (plan == null) return false;
 
@@ -37,7 +43,7 @@ final class CheckinEscalationExecutor {
                 CheckinEscalationStore.markExecuted(context, checkinId);
             }
 
-            listener?.onProgress("Sending SMS to emergency contacts…");
+            notifyProgress(listener, "Sending SMS to emergency contacts…");
 
             for (int i = 0; i < contacts.length(); i++) {
                 JSONObject contact = contacts.getJSONObject(i);
@@ -85,7 +91,8 @@ final class CheckinEscalationExecutor {
                 if (phone.isEmpty()) continue;
 
                 if (i > 0) {
-                    listener?.onProgress(
+                    notifyProgress(
+                        listener,
                         "Waiting before calling next contact (" + (i + 1) + "/" + contacts.length() + ")…"
                     );
                     try {
@@ -96,7 +103,8 @@ final class CheckinEscalationExecutor {
                     }
                 }
 
-                listener?.onProgress(
+                notifyProgress(
+                    listener,
                     "Calling " + (name.isEmpty() ? phone : name) +
                     " (" + (i + 1) + "/" + contacts.length() + ")…"
                 );

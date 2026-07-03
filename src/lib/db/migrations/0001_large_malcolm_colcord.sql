@@ -1,0 +1,1 @@
+ALTER TABLE "fake_calls" ADD COLUMN "caller_photo_url" text;

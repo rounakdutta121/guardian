@@ -1,0 +1,24 @@
+{
+  "name": "guardian-native",
+  "version": "1.0.0",
+  "description": "Native emergency SMS and phone calls using device SIM only",
+  "main": "dist/plugin.cjs.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "files": [
+    "dist/",
+    "android/",
+    "ios/"
+  ],
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  },
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    },
+    "android": {
+      "src": "android"
+    }
+  }
+}

@@ -1,36 +1,80 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Guardian
 
-## Getting Started
+Premium mobile-first women safety application built with Next.js 15, Capacitor, Drizzle ORM, and Better Auth.
 
-First, run the development server:
+## Quick Start
 
 ```bash
+npm install
+npm run db:generate
+npm run db:migrate
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Copy `.env.example` to `.env` and configure:
 
-## Learn More
+- `DATABASE_URL` — Neon PostgreSQL connection string
+- `BETTER_AUTH_SECRET` — Min 32 characters
+- `BETTER_AUTH_URL` / `NEXT_PUBLIC_APP_URL` — App URL
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — Optional Google OAuth
+- `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` — Optional Google Maps
 
-To learn more about Next.js, take a look at the following resources:
+## Database
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm run db:generate   # Generate migrations from schema
+npm run db:migrate    # Apply migrations
+npm run db:studio     # Open Drizzle Studio
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Mobile (Capacitor)
 
-## Deploy on Vercel
+```bash
+npm run build
+npx cap add android
+npm run cap:sync
+npm run cap:android
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Features
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Authentication** — Email, Google OAuth, forgot password, session management
+- **SOS Emergency Engine** — 3s countdown, GPS, SMS/call preview, live tracking, offline queue
+- **Emergency Contacts** — CRUD, search, favorites, priority
+- **Test SOS** — Full simulation without sending messages
+- **Fake Call** — Scheduled incoming call screen
+- **Safe Check-In** — Timers with confirm / need help flow
+- **Guardian Mode** — Live destination tracking with pause/resume/stop
+- **Journey Tracking** — GPS, speed, distance, battery, share link
+- **Notifications** — History, unread counts
+- **Profile & Settings** — Medical info, theme, permissions, export data
+- **Activity Log** — Full safety timeline
+
+## Architecture
+
+```
+src/
+├── app/              # Next.js App Router pages & API routes
+├── components/       # UI components (shadcn-style)
+├── hooks/            # React hooks
+├── lib/
+│   ├── auth/         # Better Auth configuration
+│   ├── db/           # Drizzle schema & migrations
+│   ├── repositories/ # Data access layer
+│   ├── services/     # Business logic
+│   └── validations/  # Zod schemas
+└── stores/           # Zustand state
+```
+
+## Tech Stack
+
+- Next.js 15+ App Router, TypeScript, Tailwind CSS v4
+- Drizzle ORM + Neon PostgreSQL
+- Better Auth
+- Zustand + TanStack Query
+- Framer Motion
+- Capacitor (Android/iOS)

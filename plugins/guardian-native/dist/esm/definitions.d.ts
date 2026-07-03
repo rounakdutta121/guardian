@@ -67,4 +67,23 @@ export interface GuardianNativePlugin {
   }): Promise<FakeCallWakeCancelResult>;
 
   consumePendingFakeCallWake(): Promise<FakeCallWakePayload | null>;
+
+  scheduleCheckinEscalation(options: {
+    notificationId: number;
+    checkinId: string;
+    triggerAt: number;
+    message: string;
+    contacts: Array<{ name: string; phone: string }>;
+  }): Promise<{ scheduled: boolean }>;
+
+  cancelCheckinEscalation(options: {
+    checkinId: string;
+    notificationId: number;
+  }): Promise<{ cancelled: boolean }>;
+
+  consumePendingCheckinExpire(): Promise<{ checkinId: string } | null>;
+
+  wasCheckinEscalationExecuted(options: {
+    checkinId: string;
+  }): Promise<{ executed: boolean }>;
 }

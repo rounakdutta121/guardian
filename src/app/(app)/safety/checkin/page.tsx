@@ -23,6 +23,10 @@ import {
   getCheckinRemainingMs,
   formatCheckinRemaining,
 } from "@/lib/checkin/client-expire";
+import {
+  scheduleCheckinBackgroundEscalation,
+  cancelCheckinBackgroundEscalation,
+} from "@/lib/checkin/native-scheduler";
 
 const PRESETS = [
   { label: "15 min", minutes: 15 },
@@ -57,29 +61,10 @@ export default function SafeCheckinPage() {
     const active = checkins?.find((c: { status: string }) => c.status === "active");
     if (active) {
       setActiveCheckin(active);
-      if (getCheckinRemainingMs(active) <= 0 && !expiringRef.current) {
-        expiringRef.current = true;
-        setShowPrompt(true);
-        void expireCheckinOnClient(active.id)
-          .then(({ emergencySession }) => {
-            queryClient.invalidateQueries({ queryKey: ["checkins"] });
-            queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-            toast.warning("Check-in timer expired");
-            if (emergencySession?.id) {
-              toast.error(
-                "Escalating to check-in contacts by priority — SMS then calls"
-              );
-            }
-          })
-          .catch(() => {
-            expiringRef.current = false;
-            toast.error("Failed to process expired check-in");
-          });
-      }
     } else {
       setActiveCheckin(null);
     }
-  }, [checkins, queryClient]);
+  }, [checkins]);
 
   const handleExpire = useCallback(async () => {
     if (!activeCheckin || expiringRef.current) return;
@@ -141,7 +126,8 @@ export default function SafeCheckinPage() {
       setShowPrompt(false);
       expiringRef.current = false;
       queryClient.invalidateQueries({ queryKey: ["checkins"] });
-      toast.success("Check-in timer started");
+      await scheduleCheckinBackgroundEscalation(checkin);
+      toast.success("Check-in timer started — alerts work in background");
     } catch {
       toast.error("Failed to start check-in");
     }
@@ -149,6 +135,7 @@ export default function SafeCheckinPage() {
 
   const confirmSafe = async () => {
     if (!activeCheckin) return;
+    await cancelCheckinBackgroundEscalation(activeCheckin.id);
     await fetch(`/api/checkin/${activeCheckin.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -193,6 +180,7 @@ export default function SafeCheckinPage() {
 
   const cancelCheckin = async () => {
     if (!activeCheckin) return;
+    await cancelCheckinBackgroundEscalation(activeCheckin.id);
     await fetch(`/api/checkin/${activeCheckin.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

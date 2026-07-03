@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { App } from "@capacitor/app";
 import { useOnlineStatus } from "@/hooks/use-online-status";
 import { syncOfflineQueue } from "@/lib/offline/client";
 import { useFakeCallStore } from "@/stores";
@@ -8,6 +9,7 @@ import { useSession } from "@/lib/auth/client";
 import { emergencyCommunicationService } from "@/lib/communication";
 import { isCapacitorNative } from "@/lib/communication/platform";
 import { triggerDueFakeCallsFromApi } from "@/lib/fake-call/trigger";
+import { retryPendingCheckinEscalation } from "@/lib/checkin/client-expire";
 import { toast } from "sonner";
 
 export function OfflineSyncProvider({ children }: { children: React.ReactNode }) {
@@ -30,19 +32,36 @@ export function CommunicationRetryProvider() {
   const { data: session } = useSession();
 
   useEffect(() => {
-    if (!isOnline || !session?.user?.id) return;
+    if (!session?.user?.id) return;
 
-    const retry = () => {
-      emergencyCommunicationService.retryQueuedCommunications().then((count) => {
-        if (count > 0) {
-          toast.info(`Retried ${count} emergency communication(s)`);
-        }
-      });
+    const retry = async () => {
+      if (!isOnline) return;
+      const commCount =
+        await emergencyCommunicationService.retryQueuedCommunications();
+      if (commCount > 0) {
+        toast.info(`Retried ${commCount} emergency communication(s)`);
+      }
+      if (isCapacitorNative()) {
+        await retryPendingCheckinEscalation();
+      }
     };
 
-    retry();
-    const interval = setInterval(retry, 60000);
-    return () => clearInterval(interval);
+    void retry();
+    const interval = setInterval(() => void retry(), 60000);
+
+    let appHandle: { remove: () => void } | null = null;
+    if (isCapacitorNative()) {
+      void App.addListener("appStateChange", ({ isActive }) => {
+        if (isActive) void retry();
+      }).then((h) => {
+        appHandle = h;
+      });
+    }
+
+    return () => {
+      clearInterval(interval);
+      appHandle?.remove();
+    };
   }, [isOnline, session?.user?.id]);
 
   return null;

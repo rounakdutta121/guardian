@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { useLocationStore } from "@/stores";
 import { getBatteryLevel } from "@/lib/location/helpers";
 import { generateMapsUrl } from "@/lib/utils";
@@ -7,10 +8,47 @@ import {
   communicationPermissions,
   isGuardianNativeAvailable,
 } from "@/lib/communication";
+import {
+  refreshLocationForEscalation,
+  wasNativeCheckinEscalationExecuted,
+  cancelCheckinBackgroundEscalation,
+} from "@/lib/checkin/native-scheduler";
 
 export type CheckinEscalationReason = "checkin_need_help" | "checkin_missed";
 
 const expiringCheckinIds = new Set<string>();
+const PENDING_ESCALATION_KEY = "guardian-pending-checkin-escalation";
+
+type PendingEscalation = {
+  sessionId: string;
+  reason: CheckinEscalationReason;
+};
+
+function savePendingEscalation(pending: PendingEscalation) {
+  try {
+    sessionStorage.setItem(PENDING_ESCALATION_KEY, JSON.stringify(pending));
+  } catch {
+    // ignore
+  }
+}
+
+function clearPendingEscalation() {
+  try {
+    sessionStorage.removeItem(PENDING_ESCALATION_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+export function getPendingEscalation(): PendingEscalation | null {
+  try {
+    const raw = sessionStorage.getItem(PENDING_ESCALATION_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as PendingEscalation;
+  } catch {
+    return null;
+  }
+}
 
 async function activateEmergencySession(sessionId: string): Promise<void> {
   try {
@@ -27,13 +65,17 @@ async function activateEmergencySession(sessionId: string): Promise<void> {
 export async function runCheckinEscalation(
   session: { id: string },
   reason: CheckinEscalationReason
-): Promise<void> {
+): Promise<boolean> {
+  savePendingEscalation({ sessionId: session.id, reason });
+
+  await refreshLocationForEscalation();
+
   const perms = await communicationPermissions.ensureEmergencyPermissions();
   if (!perms.sms && !perms.phone) {
-    console.warn(
+    toast.error(
       isGuardianNativeAvailable()
-        ? "SMS/Phone permissions denied for check-in escalation"
-        : "Native plugin unavailable for check-in escalation"
+        ? "SMS/Phone permission required — enable in Settings"
+        : "Rebuild the Android app for emergency SMS and calls"
     );
   }
 
@@ -44,34 +86,69 @@ export async function runCheckinEscalation(
   const mapsUrl =
     latitude && longitude ? generateMapsUrl(latitude, longitude) : null;
 
-  await emergencyCommunicationService.executeEmergencyCommunications({
-    sessionId: session.id,
-    isTest: false,
-    mode: "checkin",
-    context: {
-      mapsUrl,
-      latitude: latitude ?? null,
-      longitude: longitude ?? null,
-      batteryLevel: battery,
-      reason,
-    },
-  });
+  try {
+    const result = await emergencyCommunicationService.executeEmergencyCommunications({
+      sessionId: session.id,
+      isTest: false,
+      mode: "checkin",
+      context: {
+        mapsUrl,
+        latitude: latitude ?? null,
+        longitude: longitude ?? null,
+        batteryLevel: battery,
+        reason,
+      },
+    });
 
-  emergencyLocationTracker.start(
-    session.id,
-    () => {
-      const loc = useLocationStore.getState();
-      return {
-        latitude: loc.latitude,
-        longitude: loc.longitude,
-        accuracy: loc.accuracy,
-      };
-    },
-    getBatteryLevel
+    const smsOk = result.sms.some((s) => s.success);
+    const callOk = result.calls.some((c) => c.success);
+
+    if (result.sms.length === 0 && result.calls.length === 0) {
+      toast.error("No check-in contacts enabled — add contacts with Notify on check-in");
+      return false;
+    }
+
+    if (!smsOk && !callOk) {
+      toast.error("Could not reach contacts — check SMS and phone permissions");
+      return false;
+    }
+
+    clearPendingEscalation();
+
+    emergencyLocationTracker.start(
+      session.id,
+      () => {
+        const loc = useLocationStore.getState();
+        return {
+          latitude: loc.latitude,
+          longitude: loc.longitude,
+          accuracy: loc.accuracy,
+        };
+      },
+      getBatteryLevel
+    );
+
+    return true;
+  } catch (error) {
+    console.error("[Checkin] Escalation failed:", error);
+    toast.error("Failed to alert contacts — will retry when app is active");
+    return false;
+  }
+}
+
+export async function retryPendingCheckinEscalation(): Promise<void> {
+  const pending = getPendingEscalation();
+  if (!pending) return;
+  await runCheckinEscalation(
+    { id: pending.sessionId },
+    pending.reason
   );
 }
 
-export async function expireCheckinOnClient(checkinId: string): Promise<{
+export async function expireCheckinOnClient(
+  checkinId: string,
+  options?: { skipEscalation?: boolean }
+): Promise<{
   emergencySession: { id: string } | null;
 }> {
   if (expiringCheckinIds.has(checkinId)) {
@@ -80,6 +157,8 @@ export async function expireCheckinOnClient(checkinId: string): Promise<{
   expiringCheckinIds.add(checkinId);
 
   try {
+    await cancelCheckinBackgroundEscalation(checkinId);
+    await refreshLocationForEscalation();
     const { latitude, longitude, accuracy } = useLocationStore.getState();
     const battery = await getBatteryLevel();
 
@@ -102,8 +181,24 @@ export async function expireCheckinOnClient(checkinId: string): Promise<{
     const data = await res.json();
     const emergencySession = data.emergencySession ?? null;
 
-    if (emergencySession?.id) {
+    const nativeAlreadyRan = await wasNativeCheckinEscalationExecuted(checkinId);
+
+    if (emergencySession?.id && !options?.skipEscalation && !nativeAlreadyRan) {
       await runCheckinEscalation(emergencySession, "checkin_missed");
+    } else if (nativeAlreadyRan && emergencySession?.id) {
+      clearPendingEscalation();
+      emergencyLocationTracker.start(
+        emergencySession.id,
+        () => {
+          const loc = useLocationStore.getState();
+          return {
+            latitude: loc.latitude,
+            longitude: loc.longitude,
+            accuracy: loc.accuracy,
+          };
+        },
+        getBatteryLevel
+      );
     }
 
     return { emergencySession };

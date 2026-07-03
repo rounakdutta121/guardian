@@ -25,4 +25,16 @@ export class GuardianNativeWeb extends WebPlugin {
     async consumePendingFakeCallWake() {
         return null;
     }
+    async scheduleCheckinEscalation() {
+        return { scheduled: false };
+    }
+    async cancelCheckinEscalation() {
+        return { cancelled: false };
+    }
+    async consumePendingCheckinExpire() {
+        return null;
+    }
+    async wasCheckinEscalationExecuted() {
+        return { executed: false };
+    }
 }

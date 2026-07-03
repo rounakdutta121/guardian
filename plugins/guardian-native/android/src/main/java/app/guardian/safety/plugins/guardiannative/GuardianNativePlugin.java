@@ -18,6 +18,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 import java.util.ArrayList;
+import org.json.JSONArray;
 
 @CapacitorPlugin(
     name = "GuardianNative",
@@ -336,6 +337,161 @@ public class GuardianNativePlugin extends Plugin {
         if (parts.length > 3 && parts[3] != null && !parts[3].isEmpty()) {
             ret.put("callerPhotoUrl", parts[3]);
         }
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void scheduleCheckinEscalation(PluginCall call) {
+        String checkinId = call.getString("checkinId");
+        Integer notificationId = call.getInt("notificationId");
+        Long triggerAt = call.getLong("triggerAt");
+        String message = call.getString("message");
+        JSArray contacts = call.getArray("contacts");
+
+        if (
+            checkinId == null ||
+            notificationId == null ||
+            triggerAt == null ||
+            message == null ||
+            contacts == null
+        ) {
+            call.reject("checkinId, notificationId, triggerAt, message and contacts are required");
+            return;
+        }
+
+        try {
+            JSONArray contactsJson = new JSONArray();
+            for (int i = 0; i < contacts.length(); i++) {
+                org.json.JSONObject obj = contacts.getJSONObject(i);
+                JSONObject entry = new JSONObject();
+                entry.put("name", obj.optString("name", ""));
+                entry.put("phone", obj.optString("phone", ""));
+                contactsJson.put(entry);
+            }
+
+            CheckinEscalationStore.savePlan(
+                getContext(),
+                checkinId,
+                notificationId,
+                triggerAt,
+                message,
+                contactsJson
+            );
+
+            Context context = getContext();
+            Intent intent = new Intent(context, CheckinExpireReceiver.class);
+            intent.putExtra("checkinId", checkinId);
+
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                flags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+
+            PendingIntent pendingIntent = PendingIntent.getBroadcast(
+                context,
+                notificationId,
+                intent,
+                flags
+            );
+
+            AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (alarmManager == null) {
+                call.reject("AlarmManager unavailable");
+                return;
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
+            } else {
+                alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
+            }
+
+            JSObject ret = new JSObject();
+            ret.put("scheduled", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to schedule check-in escalation: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void cancelCheckinEscalation(PluginCall call) {
+        String checkinId = call.getString("checkinId");
+        Integer notificationId = call.getInt("notificationId");
+
+        if (checkinId == null || notificationId == null) {
+            call.reject("checkinId and notificationId are required");
+            return;
+        }
+
+        try {
+            Context context = getContext();
+            CheckinEscalationStore.clearPlan(context, checkinId);
+
+            Intent intent = new Intent(context, CheckinExpireReceiver.class);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                flags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+            PendingIntent pendingIntent = PendingIntent.getBroadcast(
+                context,
+                notificationId,
+                intent,
+                flags
+            );
+
+            AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (alarmManager != null) {
+                alarmManager.cancel(pendingIntent);
+            }
+            pendingIntent.cancel();
+
+            for (int i = 0; i < 20; i++) {
+                Intent callIntent = new Intent(context, CheckinCallReceiver.class);
+                PendingIntent callPending = PendingIntent.getBroadcast(
+                    context,
+                    notificationId * 100 + i + 1,
+                    callIntent,
+                    flags
+                );
+                if (alarmManager != null) {
+                    alarmManager.cancel(callPending);
+                }
+                callPending.cancel();
+            }
+
+            JSObject ret = new JSObject();
+            ret.put("cancelled", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to cancel check-in escalation: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void consumePendingCheckinExpire(PluginCall call) {
+        String checkinId = CheckinEscalationStore.consumePendingSync(getContext());
+        if (checkinId == null) {
+            call.resolve(null);
+            return;
+        }
+        JSObject ret = new JSObject();
+        ret.put("checkinId", checkinId);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void wasCheckinEscalationExecuted(PluginCall call) {
+        String checkinId = call.getString("checkinId");
+        if (checkinId == null) {
+            call.reject("checkinId is required");
+            return;
+        }
+        JSObject ret = new JSObject();
+        ret.put(
+            "executed",
+            CheckinEscalationStore.wasExecuted(getContext(), checkinId)
+        );
         call.resolve(ret);
     }
 }

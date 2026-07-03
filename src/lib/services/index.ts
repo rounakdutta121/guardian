@@ -101,7 +101,7 @@ export class EmergencyEngineService {
     const contacts = await emergencyContactRepo.findByUserId(userId);
     const isCheckinTrigger = input.trigger === "safe_checkin";
     const notifyContacts = isCheckinTrigger
-      ? contacts.filter((c) => c.notifyOnCheckin)
+      ? contacts
       : contacts.filter((c) => c.notifyOnSos);
 
     const shareLocation = settings?.autoShareLocation !== false;
@@ -484,9 +484,7 @@ export class SafeCheckinService {
     });
 
     if (notifyContacts) {
-      const contacts = (await emergencyContactRepo.findByUserId(userId)).filter(
-        (c) => c.notifyOnCheckin
-      );
+      const contacts = await emergencyContactRepo.findByUserId(userId);
       if (contacts.length > 0) {
         await notificationRepo.create(userId, {
           type: "reminder",
@@ -501,10 +499,21 @@ export class SafeCheckinService {
   }
 
   async confirmCheckin(checkinId: string, userId: string) {
+    const existing = await safeCheckinRepo.findById(checkinId, userId);
+    if (!existing) throw new Error("Check-in not found");
+
     const checkin = await safeCheckinRepo.update(checkinId, userId, {
       status: "confirmed",
       confirmedAt: new Date(),
     });
+    if (!checkin) throw new Error("Failed to confirm check-in");
+
+    if (existing.emergencySessionId) {
+      const engine = new EmergencyEngineService();
+      await engine
+        .resolveEmergency(existing.emergencySessionId, userId)
+        .catch(() => {});
+    }
 
     await activityLogRepo.create(userId, {
       type: "checkin",

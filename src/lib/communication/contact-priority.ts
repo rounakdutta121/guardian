@@ -15,7 +15,8 @@ export function filterContactsForMode(
   contacts: EmergencyContactTarget[],
   mode: "sos" | "checkin"
 ): EmergencyContactTarget[] {
-  return contacts.filter((c) =>
-    mode === "sos" ? c.notifyOnSos : c.notifyOnCheckin
-  );
+  if (mode === "checkin") {
+    return contacts;
+  }
+  return contacts.filter((c) => c.notifyOnSos);
 }

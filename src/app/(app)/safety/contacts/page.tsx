@@ -371,10 +371,6 @@ export default function EmergencyContactsPage() {
                   <span>{detailContact.notifyOnSos ? "Yes" : "No"}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Notify on Check-in</span>
-                  <span>{detailContact.notifyOnCheckin ? "Yes" : "No"}</span>
-                </div>
-                <div className="flex justify-between">
                   <span className="text-muted-foreground">Notify on Journey</span>
                   <span>{detailContact.notifyOnJourney ? "Yes" : "No"}</span>
                 </div>

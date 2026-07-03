@@ -126,7 +126,7 @@ export async function scheduleCheckinBackgroundEscalation(
 
   const contacts = await fetchCheckinContacts();
   if (contacts.length === 0) {
-    toast.error("No check-in contacts — enable Notify on check-in for at least one contact");
+    toast.error("No emergency contacts — add at least one contact first");
     return false;
   }
 

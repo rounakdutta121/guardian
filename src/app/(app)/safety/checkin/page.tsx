@@ -27,6 +27,7 @@ import {
   scheduleCheckinBackgroundEscalation,
   clearCheckinBackgroundEscalation,
 } from "@/lib/checkin/native-scheduler";
+import { abortEscalation } from "@/lib/communication";
 
 const PRESETS = [
   { label: "15 min", minutes: 15 },
@@ -135,16 +136,35 @@ export default function SafeCheckinPage() {
 
   const confirmSafe = async () => {
     if (!activeCheckin) return;
-    await clearCheckinBackgroundEscalation(activeCheckin.id);
-    await fetch(`/api/checkin/${activeCheckin.id}`, {
+    const checkinId = activeCheckin.id;
+    await clearCheckinBackgroundEscalation(checkinId);
+    abortEscalation();
+    const res = await fetch(`/api/checkin/${checkinId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "confirm" }),
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      toast.error(
+        typeof data.error === "string" ? data.error : "Failed to confirm — try again"
+      );
+      return;
+    }
     setActiveCheckin(null);
     setShowPrompt(false);
     expiringRef.current = false;
-    queryClient.invalidateQueries({ queryKey: ["checkins"] });
+    queryClient.setQueryData(
+      ["checkins"],
+      (old: Array<{ id: string; status: string }> | undefined) =>
+        old?.map((c) =>
+          c.id === checkinId ? { ...c, status: "confirmed" } : c
+        )
+    );
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["checkins"] }),
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+    ]);
     toast.success("You're marked as safe!");
   };
 
@@ -180,15 +200,24 @@ export default function SafeCheckinPage() {
 
   const cancelCheckin = async () => {
     if (!activeCheckin) return;
-    await clearCheckinBackgroundEscalation(activeCheckin.id);
-    await fetch(`/api/checkin/${activeCheckin.id}`, {
+    const checkinId = activeCheckin.id;
+    await clearCheckinBackgroundEscalation(checkinId);
+    const res = await fetch(`/api/checkin/${checkinId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "cancel" }),
     });
+    if (!res.ok) {
+      toast.error("Failed to cancel check-in");
+      return;
+    }
     setActiveCheckin(null);
     setShowPrompt(false);
-    queryClient.invalidateQueries({ queryKey: ["checkins"] });
+    expiringRef.current = false;
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["checkins"] }),
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+    ]);
     toast.info("Check-in cancelled");
   };
 

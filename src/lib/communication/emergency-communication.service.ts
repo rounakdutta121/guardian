@@ -46,7 +46,7 @@ export class EmergencyCommunicationService {
     isTest: boolean;
     context: EmergencyMessageContext;
     contacts?: EmergencyContactTarget[];
-    /** SOS uses notifyOnSos contacts; check-in uses notifyOnCheckin. */
+    /** SOS uses notifyOnSos contacts; check-in uses all emergency contacts. */
     mode?: "sos" | "checkin";
   }): Promise<CommunicationBatchResult> {
     const mode = options.mode ?? "sos";

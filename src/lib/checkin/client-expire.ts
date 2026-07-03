@@ -106,7 +106,7 @@ export async function runCheckinEscalation(
     const callOk = result.calls.some((c) => c.success);
 
     if (result.sms.length === 0 && result.calls.length === 0) {
-      toast.error("No check-in contacts enabled — add contacts with Notify on check-in");
+      toast.error("No emergency contacts — add at least one contact first");
       return false;
     }
 

@@ -19,6 +19,7 @@ import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 import java.util.ArrayList;
 import org.json.JSONArray;
+import org.json.JSONObject;
 
 @CapacitorPlugin(
     name = "GuardianNative",

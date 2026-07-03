@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { Providers } from "@/components/providers";
 import { OfflineSyncProvider, FakeCallScheduler, CommunicationRetryProvider } from "@/components/features/app-services";
 import { FakeCallOverlay } from "@/components/features/fake-call-overlay";
+import { FakeCallNotificationBootstrap } from "@/components/features/fake-call-notification-bootstrap";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -52,6 +53,7 @@ export default function RootLayout({
           <OfflineSyncProvider>
             <CommunicationRetryProvider />
             <FakeCallScheduler />
+            <FakeCallNotificationBootstrap />
             <FakeCallOverlay />
             {children}
           </OfflineSyncProvider>

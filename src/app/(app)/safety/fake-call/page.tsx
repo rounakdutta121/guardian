@@ -12,6 +12,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { fakeCallSchema, type FakeCallInput } from "@/lib/validations";
 import { toast } from "sonner";
 import { ArrowLeft, Phone, X } from "lucide-react";
+import { scheduleFakeCallLocally, cancelFakeCallLocally } from "@/lib/fake-call/local-scheduler";
+import { isCapacitorNative } from "@/lib/communication/platform";
 import { format } from "date-fns";
 
 export default function FakeCallPage() {
@@ -37,9 +39,16 @@ export default function FakeCallPage() {
       if (!res.ok) throw new Error("Failed to schedule");
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: async (call) => {
       queryClient.invalidateQueries({ queryKey: ["fake-calls"] });
-      toast.success("Fake call scheduled — incoming call will appear automatically");
+      if (isCapacitorNative()) {
+        await scheduleFakeCallLocally(call);
+        toast.success(
+          "Fake call scheduled — it will ring even if the app is minimized"
+        );
+      } else {
+        toast.success("Fake call scheduled — keep this tab open for the call");
+      }
       reset();
     },
   });
@@ -54,8 +63,11 @@ export default function FakeCallPage() {
       if (!res.ok) throw new Error("Failed to cancel");
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: async (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ["fake-calls"] });
+      if (isCapacitorNative()) {
+        await cancelFakeCallLocally(id);
+      }
       toast.success("Scheduled call cancelled");
     },
   });

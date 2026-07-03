@@ -6,6 +6,8 @@ import { syncOfflineQueue } from "@/lib/offline/client";
 import { useFakeCallStore } from "@/stores";
 import { useSession } from "@/lib/auth/client";
 import { emergencyCommunicationService } from "@/lib/communication";
+import { isCapacitorNative } from "@/lib/communication/platform";
+import { triggerDueFakeCallsFromApi } from "@/lib/fake-call/trigger";
 import { toast } from "sonner";
 
 export function OfflineSyncProvider({ children }: { children: React.ReactNode }) {
@@ -46,45 +48,31 @@ export function CommunicationRetryProvider() {
   return null;
 }
 
+/** Foreground poll fallback for web and when native alarms are unavailable. */
 export function FakeCallScheduler() {
-  const { setActiveCall } = useFakeCallStore();
+  const setActiveCall = useFakeCallStore((s) => s.setActiveCall);
+  const isRinging = useFakeCallStore((s) => s.isRinging);
   const { data: session } = useSession();
 
   useEffect(() => {
     if (!session?.user?.id) return;
 
     const poll = async () => {
+      if (useFakeCallStore.getState().isRinging) return;
       try {
         const res = await fetch("/api/fake-call");
         if (!res.ok) return;
         const calls = await res.json();
-        const now = Date.now();
-        for (const call of calls) {
-          if (call.status !== "scheduled") continue;
-          const scheduled = new Date(call.scheduledAt).getTime();
-          if (scheduled <= now) {
-            await fetch(`/api/fake-call/${call.id}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ action: "trigger" }),
-            });
-            setActiveCall(
-              call.id,
-              call.callerName,
-              call.callerNumber ?? undefined,
-              call.callerPhotoUrl ?? undefined
-            );
-          }
-        }
+        await triggerDueFakeCallsFromApi(calls, setActiveCall);
       } catch {
         // ignore poll errors
       }
     };
 
     poll();
-    const interval = setInterval(poll, 5000);
+    const interval = setInterval(poll, isCapacitorNative() ? 15000 : 5000);
     return () => clearInterval(interval);
-  }, [setActiveCall, session?.user?.id]);
+  }, [setActiveCall, session?.user?.id, isRinging]);
 
   return null;
 }

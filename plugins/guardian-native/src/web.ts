@@ -32,4 +32,16 @@ export class GuardianNativeWeb extends WebPlugin implements GuardianNativePlugin
   async requestEmergencyPermissions(): Promise<EmergencyPermissionsResult> {
     return { sms: false, phone: false };
   }
+
+  async scheduleFakeCallWake(): Promise<{ scheduled: boolean }> {
+    return { scheduled: false };
+  }
+
+  async cancelFakeCallWake(): Promise<{ cancelled: boolean }> {
+    return { cancelled: false };
+  }
+
+  async consumePendingFakeCallWake() {
+    return null;
+  }
 }

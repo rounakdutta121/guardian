@@ -17,6 +17,18 @@ declare module "guardian-native" {
   export interface OpenDialerResult {
     opened: boolean;
   }
+  export interface FakeCallWakeScheduleResult {
+    scheduled: boolean;
+  }
+  export interface FakeCallWakeCancelResult {
+    cancelled: boolean;
+  }
+  export interface FakeCallWakePayload {
+    callId: string;
+    callerName: string;
+    callerNumber?: string;
+    callerPhotoUrl?: string;
+  }
   export interface GuardianNativePlugin {
     sendSmsAutomatic(options: {
       numbers: string[];
@@ -29,6 +41,18 @@ declare module "guardian-native" {
     }): Promise<OpenSmsComposerResult>;
     openDialer(options: { number: string }): Promise<OpenDialerResult>;
     requestEmergencyPermissions(): Promise<EmergencyPermissionsResult>;
+    scheduleFakeCallWake(options: {
+      notificationId: number;
+      callId: string;
+      callerName: string;
+      callerNumber?: string;
+      callerPhotoUrl?: string;
+      triggerAt: number;
+    }): Promise<FakeCallWakeScheduleResult>;
+    cancelFakeCallWake(options: {
+      notificationId: number;
+    }): Promise<FakeCallWakeCancelResult>;
+    consumePendingFakeCallWake(): Promise<FakeCallWakePayload | null>;
   }
   export const GuardianNative: GuardianNativePlugin;
   export function isGuardianNativeAvailable(): boolean;

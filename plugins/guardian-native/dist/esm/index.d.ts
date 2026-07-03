@@ -1,2 +1,7 @@
+import type { GuardianNativePlugin } from "./definitions";
+
 export * from "./definitions";
-export { GuardianNative } from "./index";
+
+export declare const GuardianNative: GuardianNativePlugin;
+
+export declare function isGuardianNativeAvailable(): boolean;

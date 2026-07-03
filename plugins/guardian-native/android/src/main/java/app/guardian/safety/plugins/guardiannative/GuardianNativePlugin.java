@@ -1,8 +1,12 @@
 package app.guardian.safety.plugins.guardiannative;
 
 import android.Manifest;
+import android.app.AlarmManager;
+import android.app.PendingIntent;
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.telephony.SmsManager;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -225,5 +229,113 @@ public class GuardianNativePlugin extends Plugin {
         } catch (Exception e) {
             call.reject("Failed to place call: " + e.getMessage());
         }
+    }
+
+    @PluginMethod
+    public void scheduleFakeCallWake(PluginCall call) {
+        Integer notificationId = call.getInt("notificationId");
+        String callId = call.getString("callId");
+        String callerName = call.getString("callerName");
+        Long triggerAt = call.getLong("triggerAt");
+
+        if (notificationId == null || callId == null || callerName == null || triggerAt == null) {
+            call.reject("notificationId, callId, callerName and triggerAt are required");
+            return;
+        }
+
+        try {
+            Context context = getContext();
+            Intent intent = new Intent(context, FakeCallAlarmReceiver.class);
+            intent.putExtra("callId", callId);
+            intent.putExtra("callerName", callerName);
+            intent.putExtra("callerNumber", call.getString("callerNumber", ""));
+            intent.putExtra("callerPhotoUrl", call.getString("callerPhotoUrl", ""));
+
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                flags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+
+            PendingIntent pendingIntent = PendingIntent.getBroadcast(
+                context,
+                notificationId,
+                intent,
+                flags
+            );
+
+            AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (alarmManager == null) {
+                call.reject("AlarmManager unavailable");
+                return;
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
+            } else {
+                alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent);
+            }
+
+            JSObject ret = new JSObject();
+            ret.put("scheduled", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to schedule fake call wake: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void cancelFakeCallWake(PluginCall call) {
+        Integer notificationId = call.getInt("notificationId");
+        if (notificationId == null) {
+            call.reject("notificationId is required");
+            return;
+        }
+
+        try {
+            Context context = getContext();
+            Intent intent = new Intent(context, FakeCallAlarmReceiver.class);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                flags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+            PendingIntent pendingIntent = PendingIntent.getBroadcast(
+                context,
+                notificationId,
+                intent,
+                flags
+            );
+
+            AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (alarmManager != null) {
+                alarmManager.cancel(pendingIntent);
+            }
+            pendingIntent.cancel();
+
+            JSObject ret = new JSObject();
+            ret.put("cancelled", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to cancel fake call wake: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void consumePendingFakeCallWake(PluginCall call) {
+        String[] parts = FakeCallWakeStore.consume(getContext());
+        if (parts == null) {
+            call.resolve(null);
+            return;
+        }
+
+        JSObject ret = new JSObject();
+        ret.put("callId", parts[0]);
+        ret.put("callerName", parts.length > 1 ? parts[1] : "");
+        if (parts.length > 2 && parts[2] != null && !parts[2].isEmpty()) {
+            ret.put("callerNumber", parts[2]);
+        }
+        if (parts.length > 3 && parts[3] != null && !parts[3].isEmpty()) {
+            ret.put("callerPhotoUrl", parts[3]);
+        }
+        call.resolve(ret);
     }
 }

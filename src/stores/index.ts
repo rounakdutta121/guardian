@@ -42,7 +42,11 @@ interface EmergencyState {
   status: "idle" | "countdown" | "active" | "resolved";
   countdown: number;
   isTest: boolean;
+  /** When true, active session shows a banner instead of fullscreen overlay. */
+  bannerOnly: boolean;
   setSession: (id: string, isTest?: boolean) => void;
+  resumeSession: (id: string, isTest?: boolean) => void;
+  openOverlay: () => void;
   setStatus: (status: EmergencyState["status"]) => void;
   setCountdown: (countdown: number) => void;
   reset: () => void;
@@ -53,12 +57,22 @@ export const useEmergencyStore = create<EmergencyState>((set) => ({
   status: "idle",
   countdown: 3,
   isTest: false,
+  bannerOnly: false,
   setSession: (sessionId, isTest = false) =>
-    set({ sessionId, isTest, status: "countdown" }),
+    set({ sessionId, isTest, status: "countdown", bannerOnly: false }),
+  resumeSession: (sessionId, isTest = false) =>
+    set({ sessionId, isTest, status: "active", bannerOnly: true, countdown: 0 }),
+  openOverlay: () => set({ bannerOnly: false }),
   setStatus: (status) => set({ status }),
   setCountdown: (countdown) => set({ countdown }),
   reset: () =>
-    set({ sessionId: null, status: "idle", countdown: 3, isTest: false }),
+    set({
+      sessionId: null,
+      status: "idle",
+      countdown: 3,
+      isTest: false,
+      bannerOnly: false,
+    }),
 }));
 
 interface OfflineState {

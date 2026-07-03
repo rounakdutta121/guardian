@@ -16,12 +16,85 @@ import { haversineMeters } from "@/lib/location/helpers";
 import { buildSmsPreviewLine } from "@/lib/communication/message-builder";
 import type { EmergencyTriggerInput, JourneyInput } from "@/lib/validations";
 import { addMinutes } from "date-fns";
+import {
+  expireReason,
+  shouldAutoExpireSession,
+} from "./emergency-session-lifecycle";
 
 export class EmergencyEngineService {
+  /** Close abandoned countdown / stale test / stale active sessions. */
+  async expireStaleSessions(userId: string): Promise<number> {
+    const open = await emergencySessionRepo.findAllOpen(userId);
+    let expired = 0;
+
+    for (const session of open) {
+      if (!shouldAutoExpireSession(session)) continue;
+
+      const timeline = [
+        ...(session.timeline ?? []),
+        {
+          event: "auto_expired",
+          timestamp: new Date().toISOString(),
+          data: { reason: expireReason(session) },
+        },
+      ];
+
+      if (session.status === "countdown" || session.isTest) {
+        await emergencySessionRepo.update(session.id, userId, {
+          status: "cancelled",
+          cancelledAt: new Date(),
+          timeline,
+        });
+      } else {
+        await emergencySessionRepo.update(session.id, userId, {
+          status: "resolved",
+          resolvedAt: new Date(),
+          timeline,
+        });
+      }
+      expired++;
+    }
+
+    return expired;
+  }
+
+  async getActiveSession(userId: string) {
+    await this.expireStaleSessions(userId);
+    return emergencySessionRepo.findActive(userId);
+  }
+
+  /** Force-close every open countdown/active session for the user. */
+  async closeAllOpenSessions(userId: string) {
+    await this.expireStaleSessions(userId);
+    const open = await emergencySessionRepo.findAllOpen(userId);
+    for (const session of open) {
+      try {
+        if (session.status === "countdown" || session.isTest) {
+          await this.cancelEmergency(session.id, userId);
+        } else {
+          await this.resolveEmergency(session.id, userId);
+        }
+      } catch {
+        // continue closing remaining sessions
+      }
+    }
+    return open.length;
+  }
+
   async startEmergency(userId: string, input: EmergencyTriggerInput) {
+    await this.expireStaleSessions(userId);
+
     const active = await emergencySessionRepo.findActive(userId);
-    if (active && !input.isTest) {
-      throw new Error("An emergency session is already active");
+    if (active) {
+      if (input.isTest) {
+        await this.resolveEmergency(active.id, userId).catch(() =>
+          this.cancelEmergency(active.id, userId)
+        );
+      } else if (active.status === "countdown") {
+        await this.cancelEmergency(active.id, userId);
+      } else {
+        throw new Error("An emergency session is already active");
+      }
     }
 
     const settings = await settingsRepo.findByUserId(userId);

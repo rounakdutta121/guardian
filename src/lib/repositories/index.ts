@@ -204,8 +204,23 @@ export class EmergencySessionRepository {
           isNull(emergencySessions.deletedAt)
         )
       )
+      .orderBy(desc(emergencySessions.createdAt))
       .limit(1);
     return session ?? null;
+  }
+
+  async findAllOpen(userId: string) {
+    return db
+      .select()
+      .from(emergencySessions)
+      .where(
+        and(
+          eq(emergencySessions.userId, userId),
+          sql`${emergencySessions.status} IN ('countdown', 'active')`,
+          isNull(emergencySessions.deletedAt)
+        )
+      )
+      .orderBy(desc(emergencySessions.createdAt));
   }
 }
 

@@ -7,6 +7,7 @@ import { emergencyTriggerSchema } from "@/lib/validations";
 export async function GET() {
   try {
     const session = await requireAuth();
+    await emergencyEngine.expireStaleSessions(session.user.id);
     const sessions = await emergencySessionRepo.findByUserId(session.user.id);
     return NextResponse.json(sessions);
   } catch {
@@ -27,5 +28,15 @@ export async function POST(request: Request) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Invalid request";
     return NextResponse.json({ error: message }, { status: 400 });
+  }
+}
+
+export async function DELETE() {
+  try {
+    const session = await requireAuth();
+    const closed = await emergencyEngine.closeAllOpenSessions(session.user.id);
+    return NextResponse.json({ closed });
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 }

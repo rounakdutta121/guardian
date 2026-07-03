@@ -5,11 +5,32 @@ import { Button } from "@/components/ui/button";
 import { useEmergencyStore, useLocationStore } from "@/stores";
 import { getBatteryLevel } from "@/lib/location/helpers";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 
 export function TestSOSButton() {
-  const { status, setSession, setStatus, setCountdown } = useEmergencyStore();
+  const queryClient = useQueryClient();
+  const {
+    status,
+    setSession,
+    setStatus,
+    setCountdown,
+    openOverlay,
+    reset,
+  } = useEmergencyStore();
   const [showDisclaimer, setShowDisclaimer] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+
+  const finishTest = async (id: string) => {
+    await fetch(`/api/emergency/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "resolve" }),
+    });
+    reset();
+    setSessionId(null);
+    queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  };
 
   const runTest = async () => {
     setLoading(true);
@@ -28,9 +49,14 @@ export function TestSOSButton() {
           batteryLevel: battery ?? undefined,
         }),
       });
-      if (!res.ok) throw new Error("Test failed");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { error?: string }).error ?? "Test failed");
+      }
       const session = await res.json();
+      setSessionId(session.id);
       setSession(session.id, true);
+      openOverlay();
       setStatus("countdown");
       let count = 3;
       setCountdown(count);
@@ -48,8 +74,10 @@ export function TestSOSButton() {
         }
       }, 1000);
       setShowDisclaimer(false);
-    } catch {
-      toast.error("Test SOS failed");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Test SOS failed"
+      );
     } finally {
       setLoading(false);
     }
@@ -72,13 +100,24 @@ export function TestSOSButton() {
   }
 
   return (
-    <Button
-      variant="outline"
-      onClick={() => setShowDisclaimer(true)}
-      disabled={status !== "idle"}
-      className="w-full"
-    >
-      Run Test SOS
-    </Button>
+    <div className="space-y-3">
+      <Button
+        variant="outline"
+        onClick={() => setShowDisclaimer(true)}
+        disabled={status !== "idle"}
+        className="w-full"
+      >
+        Run Test SOS
+      </Button>
+      {sessionId && status === "active" && (
+        <Button
+          variant="default"
+          className="w-full"
+          onClick={() => finishTest(sessionId)}
+        >
+          Finish Test & Close Session
+        </Button>
+      )}
+    </div>
   );
 }

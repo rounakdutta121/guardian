@@ -5,9 +5,10 @@ import { Button } from "@/components/ui/button";
 import { useEmergencyStore, useLocationStore } from "@/stores";
 import { useGeolocation } from "@/hooks/use-geolocation";
 import { useSettings } from "@/hooks/use-api";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { X, MapPin, Phone, MessageSquare, Clock } from "lucide-react";
+import { X, MapPin, Phone, MessageSquare, Clock, AlertTriangle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { getBatteryLevel, reverseGeocode } from "@/lib/location/helpers";
 import { enqueueOfflineAction } from "@/lib/offline/client";
@@ -18,6 +19,7 @@ import {
   communicationPermissions,
   isGuardianNativeAvailable,
 } from "@/lib/communication";
+import { shouldAutoOpenEmergencyOverlay } from "@/lib/services/emergency-session-lifecycle";
 
 interface SOSButtonProps {
   countdownSeconds?: number;
@@ -31,6 +33,8 @@ type TimelineEvent = {
 
 type SessionData = {
   id: string;
+  status?: string;
+  createdAt?: string;
   smsPreview?: string[];
   callPreview?: string[];
   timeline?: TimelineEvent[];
@@ -68,15 +72,32 @@ async function activateSession(sessionId: string) {
 }
 
 export function SOSButton({ countdownSeconds: propCountdown }: SOSButtonProps) {
+  const queryClient = useQueryClient();
   const { data: settingsData } = useSettings();
   const countdownSeconds =
     propCountdown ?? settingsData?.settings?.sosCountdownSeconds ?? 3;
 
   const { latitude, longitude, accuracy } = useGeolocation(true);
-  const { status, countdown, setSession, setStatus, setCountdown, reset, isTest } =
-    useEmergencyStore();
+  const {
+    status,
+    countdown,
+    bannerOnly,
+    setSession,
+    resumeSession,
+    openOverlay,
+    setStatus,
+    setCountdown,
+    reset,
+    isTest,
+  } = useEmergencyStore();
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
   const [commStatus, setCommStatus] = useState<CommStatus | null>(null);
+  const hydratedRef = useRef(false);
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const invalidateDashboard = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  }, [queryClient]);
 
   const buildPayload = useCallback(
     async (test: boolean) => {
@@ -170,6 +191,7 @@ export function SOSButton({ countdownSeconds: propCountdown }: SOSButtonProps) {
   const onCountdownComplete = useCallback(
     async (session: SessionData, test: boolean) => {
       setStatus("active");
+      openOverlay();
       try {
         await activateSession(session.id);
       } catch {
@@ -190,99 +212,199 @@ export function SOSButton({ countdownSeconds: propCountdown }: SOSButtonProps) {
       await runNativeCommunications(session, test);
       startTracking(session.id);
     },
-    [setStatus, runNativeCommunications, startTracking]
+    [setStatus, openOverlay, runNativeCommunications, startTracking]
   );
 
   const startEmergency = useCallback(
     async (test = false) => {
+      if (status !== "idle") {
+        toast.info("End the current emergency session before starting a new one");
+        return;
+      }
       try {
         const payload = await buildPayload(test);
         const session = await postEmergency(payload);
         setSession(session.id, test);
         setSessionData(session);
+        openOverlay();
 
         const initialCount = test ? 3 : countdownSeconds;
         let count = initialCount;
         setCountdown(count);
         setStatus("countdown");
 
-        const interval = setInterval(() => {
+        if (countdownIntervalRef.current) {
+          clearInterval(countdownIntervalRef.current);
+        }
+        countdownIntervalRef.current = setInterval(() => {
           count -= 1;
           setCountdown(count);
           if (count <= 0) {
-            clearInterval(interval);
+            if (countdownIntervalRef.current) {
+              clearInterval(countdownIntervalRef.current);
+              countdownIntervalRef.current = null;
+            }
             onCountdownComplete(session, test);
           }
         }, 1000);
-      } catch {
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to start emergency";
+        if (message.includes("already active")) {
+          toast.error("An emergency is already active — tap I'm Safe to end it");
+          invalidateDashboard();
+          return;
+        }
         const payload = await buildPayload(test);
         enqueueOfflineAction("emergency_start", payload);
         toast.warning("Offline — emergency queued for sync");
       }
     },
     [
+      status,
       buildPayload,
       countdownSeconds,
       setSession,
       setStatus,
       setCountdown,
+      openOverlay,
       onCountdownComplete,
+      invalidateDashboard,
     ]
   );
 
   useEffect(() => {
     return () => {
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+      }
       emergencyLocationTracker.stop();
     };
   }, []);
 
+  // Hydrate once from server — never re-trigger when status returns to idle
   useEffect(() => {
+    if (hydratedRef.current) return;
+    hydratedRef.current = true;
+
     fetch("/api/dashboard")
       .then((r) => r.json())
       .then((data) => {
-        if (data.activeEmergency && status === "idle") {
-          setSession(data.activeEmergency.id, data.activeEmergency.isTest);
-          setSessionData(data.activeEmergency);
-          setStatus("active");
-          startTracking(data.activeEmergency.id);
+        const active = data.activeEmergency as SessionData | null;
+        if (!active || useEmergencyStore.getState().status !== "idle") return;
+
+        setSessionData(active);
+
+        const openFullscreen = shouldAutoOpenEmergencyOverlay({
+          status: active.status ?? "active",
+          isTest: Boolean(active.isTest),
+          createdAt: active.createdAt ?? new Date().toISOString(),
+        });
+
+        if (openFullscreen) {
+          setSession(active.id, active.isTest);
+          setStatus(active.status === "countdown" ? "countdown" : "active");
+          openOverlay();
+        } else {
+          resumeSession(active.id, active.isTest);
+          toast.info(
+            active.isTest
+              ? "A test SOS session is still open — end it when done"
+              : "An emergency session is still active",
+            { duration: 6000 }
+          );
+        }
+
+        if (active.status === "active" || openFullscreen) {
+          startTracking(active.id);
         }
       })
       .catch(() => {});
-  }, [status, setSession, setStatus, startTracking]);
+  }, [resumeSession, setSession, setStatus, openOverlay, startTracking]);
 
-  const cancelEmergency = async () => {
-    if (sessionData?.id) {
-      await fetch(`/api/emergency/${sessionData.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "cancel" }),
-      });
+  const endSessionOnServer = async (
+    action: "resolve" | "cancel"
+  ): Promise<boolean> => {
+    if (!sessionData?.id) return true;
+    const res = await fetch(`/api/emergency/${sessionData.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    if (!res.ok) {
+      toast.error("Could not end emergency on server — try again");
+      return false;
     }
+    emergencyLocationTracker.clearLocalHistory(sessionData.id);
+    return true;
+  };
+
+  const clearLocalEmergency = () => {
     emergencyLocationTracker.stop();
     reset();
     setSessionData(null);
     setCommStatus(null);
+    invalidateDashboard();
+  };
+
+  const cancelEmergency = async () => {
+    const ok = await endSessionOnServer("cancel");
+    if (!ok) return;
+    clearLocalEmergency();
     toast.info("Emergency cancelled");
   };
 
   const resolveEmergency = async () => {
-    if (sessionData?.id) {
-      await fetch(`/api/emergency/${sessionData.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "resolve" }),
-      });
-      emergencyLocationTracker.clearLocalHistory(sessionData.id);
-    }
-    emergencyLocationTracker.stop();
-    reset();
-    setSessionData(null);
-    setCommStatus(null);
-    toast.success("Emergency resolved");
+    const ok = await endSessionOnServer("resolve");
+    if (!ok) return;
+    clearLocalEmergency();
+    toast.success("Emergency resolved — you're marked safe");
   };
+
+  const forceCloseAllSessions = async () => {
+    const res = await fetch("/api/emergency", { method: "DELETE" });
+    if (!res.ok) {
+      toast.error("Failed to clear emergency sessions");
+      return;
+    }
+    clearLocalEmergency();
+    toast.success("All emergency sessions closed");
+  };
+
+  const showFullscreenOverlay =
+    status === "countdown" || (status === "active" && !bannerOnly);
 
   return (
     <>
+      {status === "active" && bannerOnly && sessionData && (
+        <Card className="mb-4 border-destructive/40 bg-destructive/5">
+          <CardContent className="space-y-3 p-4">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+              <div className="flex-1">
+                <p className="font-semibold text-destructive">
+                  {sessionData.isTest ? "Test SOS still open" : "Emergency session active"}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  This session was left open. End it if you are safe, or view details.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" onClick={openOverlay}>
+                View
+              </Button>
+              <Button size="sm" onClick={resolveEmergency}>
+                I&apos;m Safe
+              </Button>
+              <Button size="sm" variant="ghost" onClick={forceCloseAllSessions}>
+                Clear all
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex flex-col items-center gap-4">
         <motion.div whileTap={{ scale: 0.95 }}>
           <Button
@@ -296,12 +418,14 @@ export function SOSButton({ countdownSeconds: propCountdown }: SOSButtonProps) {
           </Button>
         </motion.div>
         <p className="text-center text-xs text-muted-foreground">
-          Tap to activate emergency
+          {status !== "idle"
+            ? "End the active session before starting a new SOS"
+            : "Tap to activate emergency"}
         </p>
       </div>
 
       <AnimatePresence>
-        {(status === "countdown" || status === "active") && (
+        {showFullscreenOverlay && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

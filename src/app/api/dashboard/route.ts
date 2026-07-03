@@ -2,13 +2,13 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/server";
 import {
   emergencyContactRepo,
-  emergencySessionRepo,
   journeyRepo,
   safeCheckinRepo,
   notificationRepo,
   activityLogRepo,
   profileRepo,
 } from "@/lib/repositories";
+import { emergencyEngine } from "@/lib/services";
 
 export async function GET() {
   try {
@@ -25,7 +25,7 @@ export async function GET() {
       profile,
     ] = await Promise.all([
       emergencyContactRepo.findByUserId(userId),
-      emergencySessionRepo.findActive(userId),
+      emergencyEngine.getActiveSession(userId),
       journeyRepo.findActive(userId),
       safeCheckinRepo.findActive(userId),
       notificationRepo.getUnreadCount(userId),

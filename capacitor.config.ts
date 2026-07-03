@@ -5,6 +5,7 @@ const config: CapacitorConfig = {
   appName: "Guardian",
   webDir: "out",
   server: {
+    url: "https://guardianforpeople.vercel.app",
     androidScheme: "https",
   },
   plugins: {

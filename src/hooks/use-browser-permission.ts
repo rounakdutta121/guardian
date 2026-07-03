@@ -1,9 +1,11 @@
 "use client";
 
 import { toast } from "sonner";
+import { Capacitor } from "@capacitor/core";
 import {
   communicationPermissions,
   PERMISSION_EXPLANATIONS,
+  requestNativeEmergencyPermissions,
 } from "@/lib/communication";
 
 type PermissionKey =
@@ -22,7 +24,28 @@ export async function requestBrowserPermission(
   try {
     switch (key) {
       case "location":
+        if (Capacitor.isNativePlatform()) {
+          return communicationPermissions.requestLocation();
+        }
+        return new Promise((resolve) => {
+          if (!navigator.geolocation) {
+            toast.error("Geolocation not supported");
+            resolve(false);
+            return;
+          }
+          navigator.geolocation.getCurrentPosition(
+            () => resolve(true),
+            () => {
+              toast.error("Location permission denied");
+              resolve(false);
+            },
+            { enableHighAccuracy: true }
+          );
+        });
       case "backgroundLocation": {
+        if (Capacitor.isNativePlatform()) {
+          return communicationPermissions.requestBackgroundLocation();
+        }
         return new Promise((resolve) => {
           if (!navigator.geolocation) {
             toast.error("Geolocation not supported");
@@ -77,6 +100,13 @@ export async function requestBrowserPermission(
         return true;
       }
       case "phone": {
+        if (Capacitor.isNativePlatform()) {
+          const native = await requestNativeEmergencyPermissions();
+          if (!native.phone) {
+            toast.error("Phone permission denied — enable in Android Settings");
+          }
+          return native.phone;
+        }
         const info = PERMISSION_EXPLANATIONS.phone;
         toast.info(info.description);
         return communicationPermissions.getDeviceCapabilities().then(
@@ -84,6 +114,13 @@ export async function requestBrowserPermission(
         );
       }
       case "sms": {
+        if (Capacitor.isNativePlatform()) {
+          const native = await requestNativeEmergencyPermissions();
+          if (!native.sms) {
+            toast.error("SMS permission denied — enable in Android Settings");
+          }
+          return native.sms;
+        }
         const info = PERMISSION_EXPLANATIONS.sms;
         toast.info(info.description);
         return communicationPermissions.getDeviceCapabilities().then(

@@ -91,7 +91,9 @@ export class CommunicationPermissionsService {
       canMakeCalls: isMobileDevice(),
       canAutoSendSms: isCapacitorNative() && isAndroid(),
       canAutoCall: isCapacitorNative(),
-      hasLocation: isBrowser() && "geolocation" in navigator,
+      hasLocation:
+        isCapacitorNative() ||
+        (isBrowser() && "geolocation" in navigator),
       isOnline,
       airplaneMode,
       platform,
@@ -155,13 +157,16 @@ export class CommunicationPermissionsService {
     const caps = await this.getDeviceCapabilities();
     const location = caps.hasLocation ? await this.requestLocation() : false;
 
-    let sms = caps.canSendSms;
-    let phone = caps.canMakeCalls;
+    let sms = false;
+    let phone = false;
 
     if (isCapacitorNative()) {
       const native = await requestNativeEmergencyPermissions();
-      sms = native.sms || sms;
-      phone = native.phone || phone;
+      sms = native.sms;
+      phone = native.phone;
+    } else {
+      sms = caps.canSendSms;
+      phone = caps.canMakeCalls;
     }
 
     return { location, sms, phone };

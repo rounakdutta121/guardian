@@ -20,7 +20,7 @@ import {
   isGuardianNativeAvailable,
   abortEscalation,
 } from "@/lib/communication";
-import { shouldAutoOpenEmergencyOverlay } from "@/lib/services/emergency-session-lifecycle";
+import { shouldAutoOpenEmergencyOverlay, getSessionAgeMs } from "@/lib/services/emergency-session-lifecycle";
 
 interface SOSButtonProps {
   countdownSeconds?: number;
@@ -35,6 +35,7 @@ type TimelineEvent = {
 type SessionData = {
   id: string;
   status?: string;
+  trigger?: string;
   createdAt?: string;
   smsPreview?: string[];
   callPreview?: string[];
@@ -290,6 +291,42 @@ export function SOSButton({ countdownSeconds: propCountdown }: SOSButtonProps) {
     };
   }, []);
 
+  const resumeCountdown = useCallback(
+    (session: SessionData, test: boolean) => {
+      const elapsedSec = Math.floor(
+        getSessionAgeMs({ createdAt: session.createdAt ?? new Date().toISOString() }) /
+          1000
+      );
+      let count = Math.max(0, countdownSeconds - elapsedSec);
+
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+      }
+
+      if (count <= 0) {
+        void onCountdownComplete(session, test);
+        return;
+      }
+
+      setCountdown(count);
+      setStatus("countdown");
+      openOverlay();
+
+      countdownIntervalRef.current = setInterval(() => {
+        count -= 1;
+        setCountdown(count);
+        if (count <= 0) {
+          if (countdownIntervalRef.current) {
+            clearInterval(countdownIntervalRef.current);
+            countdownIntervalRef.current = null;
+          }
+          void onCountdownComplete(session, test);
+        }
+      }, 1000);
+    },
+    [countdownSeconds, onCountdownComplete, openOverlay, setCountdown, setStatus]
+  );
+
   // Hydrate once from server — never re-trigger when status returns to idle
   useEffect(() => {
     if (hydratedRef.current) return;
@@ -303,13 +340,22 @@ export function SOSButton({ countdownSeconds: propCountdown }: SOSButtonProps) {
 
         setSessionData(active);
 
+        if (active.trigger === "safe_checkin") {
+          resumeSession(active.id, active.isTest ?? false);
+          startTracking(active.id);
+          return;
+        }
+
         const openFullscreen = shouldAutoOpenEmergencyOverlay({
           status: active.status ?? "active",
           isTest: Boolean(active.isTest),
           createdAt: active.createdAt ?? new Date().toISOString(),
         });
 
-        if (openFullscreen) {
+        if (active.status === "countdown" && openFullscreen) {
+          setSession(active.id, active.isTest);
+          resumeCountdown(active, Boolean(active.isTest));
+        } else if (openFullscreen) {
           setSession(active.id, active.isTest);
           setStatus(active.status === "countdown" ? "countdown" : "active");
           openOverlay();
@@ -328,7 +374,14 @@ export function SOSButton({ countdownSeconds: propCountdown }: SOSButtonProps) {
         }
       })
       .catch(() => {});
-  }, [resumeSession, setSession, setStatus, openOverlay, startTracking]);
+  }, [
+    resumeSession,
+    setSession,
+    setStatus,
+    openOverlay,
+    startTracking,
+    resumeCountdown,
+  ]);
 
   const endSessionOnServer = async (
     action: "resolve" | "cancel"

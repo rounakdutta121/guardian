@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -18,11 +18,11 @@ import { formatDistanceToNow } from "date-fns";
 import { useLocationStore } from "@/stores";
 import { getBatteryLevel } from "@/lib/location/helpers";
 import {
-  emergencyCommunicationService,
-  emergencyLocationTracker,
-  abortEscalation,
-} from "@/lib/communication";
-import { generateMapsUrl } from "@/lib/utils";
+  runCheckinEscalation,
+  expireCheckinOnClient,
+  getCheckinRemainingMs,
+  formatCheckinRemaining,
+} from "@/lib/checkin/client-expire";
 
 const PRESETS = [
   { label: "15 min", minutes: 15 },
@@ -40,7 +40,9 @@ export default function SafeCheckinPage() {
     durationMinutes: number;
   } | null>(null);
   const [progress, setProgress] = useState(100);
+  const [remainingLabel, setRemainingLabel] = useState("");
   const [showPrompt, setShowPrompt] = useState(false);
+  const expiringRef = useRef(false);
 
   const { data: checkins } = useQuery({
     queryKey: ["checkins"],
@@ -53,90 +55,70 @@ export default function SafeCheckinPage() {
 
   useEffect(() => {
     const active = checkins?.find((c: { status: string }) => c.status === "active");
-    if (active) setActiveCheckin(active);
-  }, [checkins]);
-
-  const runCheckinEscalation = async (
-    session: { id: string },
-    reason: "checkin_need_help" | "checkin_missed"
-  ) => {
-    const { latitude, longitude, accuracy } = useLocationStore.getState();
-    const battery = await getBatteryLevel();
-    const mapsUrl =
-      latitude && longitude ? generateMapsUrl(latitude, longitude) : null;
-
-    await emergencyCommunicationService.executeEmergencyCommunications({
-      sessionId: session.id,
-      isTest: false,
-      mode: "checkin",
-      context: {
-        mapsUrl,
-        latitude: latitude ?? null,
-        longitude: longitude ?? null,
-        batteryLevel: battery,
-        reason,
-      },
-    });
-
-    emergencyLocationTracker.start(
-      session.id,
-      () => {
-        const loc = useLocationStore.getState();
-        return {
-          latitude: loc.latitude,
-          longitude: loc.longitude,
-          accuracy: loc.accuracy,
-        };
-      },
-      getBatteryLevel
-    );
-  };
+    if (active) {
+      setActiveCheckin(active);
+      if (getCheckinRemainingMs(active) <= 0 && !expiringRef.current) {
+        expiringRef.current = true;
+        setShowPrompt(true);
+        void expireCheckinOnClient(active.id)
+          .then(({ emergencySession }) => {
+            queryClient.invalidateQueries({ queryKey: ["checkins"] });
+            queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+            toast.warning("Check-in timer expired");
+            if (emergencySession?.id) {
+              toast.error(
+                "Escalating to check-in contacts by priority — SMS then calls"
+              );
+            }
+          })
+          .catch(() => {
+            expiringRef.current = false;
+            toast.error("Failed to process expired check-in");
+          });
+      }
+    } else {
+      setActiveCheckin(null);
+    }
+  }, [checkins, queryClient]);
 
   const handleExpire = useCallback(async () => {
-    if (!activeCheckin) return;
+    if (!activeCheckin || expiringRef.current) return;
+    expiringRef.current = true;
     setShowPrompt(true);
-    const { latitude, longitude, accuracy } = useLocationStore.getState();
-    const battery = await getBatteryLevel();
-    const res = await fetch(`/api/checkin/${activeCheckin.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "expire",
-        latitude: latitude ?? undefined,
-        longitude: longitude ?? undefined,
-        accuracy: accuracy ?? undefined,
-        batteryLevel: battery ?? undefined,
-      }),
-    });
-    queryClient.invalidateQueries({ queryKey: ["checkins"] });
-    toast.warning("Check-in timer expired");
 
-    if (res.ok) {
-      const data = await res.json();
-      if (data.emergencySession?.id) {
-        await runCheckinEscalation(data.emergencySession, "checkin_missed");
+    try {
+      const { emergencySession } = await expireCheckinOnClient(activeCheckin.id);
+      queryClient.invalidateQueries({ queryKey: ["checkins"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.warning("Check-in timer expired");
+      if (emergencySession?.id) {
         toast.error(
           "Escalating to check-in contacts by priority — SMS then calls"
         );
       }
+    } catch {
+      expiringRef.current = false;
+      toast.error("Failed to process expired check-in");
     }
   }, [activeCheckin, queryClient]);
 
   useEffect(() => {
-    if (!activeCheckin) return;
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const expires = new Date(activeCheckin.expiresAt).getTime();
+    if (!activeCheckin || showPrompt) return;
+
+    const tick = () => {
+      const remainingMs = getCheckinRemainingMs(activeCheckin);
       const total = activeCheckin.durationMinutes * 60 * 1000;
-      const remaining = Math.max(0, expires - now);
-      setProgress((remaining / total) * 100);
-      if (remaining <= 0) {
-        clearInterval(interval);
-        handleExpire();
+      setProgress(total > 0 ? (remainingMs / total) * 100 : 0);
+      setRemainingLabel(formatCheckinRemaining(remainingMs));
+      if (remainingMs <= 0) {
+        void handleExpire();
       }
-    }, 1000);
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [activeCheckin, handleExpire]);
+  }, [activeCheckin, showPrompt, handleExpire]);
 
   const { register, handleSubmit, setValue, formState: { errors } } = useForm<SafeCheckinInput>({
     resolver: zodResolver(safeCheckinSchema),
@@ -157,6 +139,7 @@ export default function SafeCheckinPage() {
       const checkin = await res.json();
       setActiveCheckin(checkin);
       setShowPrompt(false);
+      expiringRef.current = false;
       queryClient.invalidateQueries({ queryKey: ["checkins"] });
       toast.success("Check-in timer started");
     } catch {
@@ -173,6 +156,7 @@ export default function SafeCheckinPage() {
     });
     setActiveCheckin(null);
     setShowPrompt(false);
+    expiringRef.current = false;
     queryClient.invalidateQueries({ queryKey: ["checkins"] });
     toast.success("You're marked as safe!");
   };
@@ -201,7 +185,9 @@ export default function SafeCheckinPage() {
     await runCheckinEscalation(emergencySession, "checkin_need_help");
     setActiveCheckin(null);
     setShowPrompt(false);
+    expiringRef.current = false;
     queryClient.invalidateQueries({ queryKey: ["checkins"] });
+    queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     toast.error("Need help — escalating to check-in contacts by priority");
   };
 
@@ -249,8 +235,8 @@ export default function SafeCheckinPage() {
           <Card>
             <CardContent className="space-y-6 p-6 text-center">
               <Clock className="mx-auto h-12 w-12 text-primary" />
-              <p className="text-2xl font-bold">
-                {formatDistanceToNow(new Date(activeCheckin.expiresAt))} left
+              <p className="text-2xl font-bold tabular-nums">
+                {remainingLabel || formatCheckinRemaining(getCheckinRemainingMs(activeCheckin))} left
               </p>
               <Progress value={progress} className="h-2" />
               <div className="flex flex-col gap-3">

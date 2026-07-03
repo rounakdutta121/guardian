@@ -99,7 +99,10 @@ export class EmergencyEngineService {
 
     const settings = await settingsRepo.findByUserId(userId);
     const contacts = await emergencyContactRepo.findByUserId(userId);
-    const sosContacts = contacts.filter((c) => c.notifyOnSos);
+    const isCheckinTrigger = input.trigger === "safe_checkin";
+    const notifyContacts = isCheckinTrigger
+      ? contacts.filter((c) => c.notifyOnCheckin)
+      : contacts.filter((c) => c.notifyOnSos);
 
     const shareLocation = settings?.autoShareLocation !== false;
     const lat = shareLocation ? (input.latitude ?? 0) : 0;
@@ -114,10 +117,10 @@ export class EmergencyEngineService {
       timestamp: new Date(),
     };
 
-    const smsPreview = sosContacts.map((c) =>
+    const smsPreview = notifyContacts.map((c) =>
       buildSmsPreviewLine(c.phone, messageContext)
     );
-    const callPreview = sosContacts.map((c) => `Call: ${c.name} (${c.phone})`);
+    const callPreview = notifyContacts.map((c) => `Call: ${c.name} (${c.phone})`);
 
     const timeline = [
       {
@@ -138,12 +141,13 @@ export class EmergencyEngineService {
       {
         event: "contacts_prepared",
         timestamp: new Date().toISOString(),
-        data: { count: sosContacts.length },
+        data: { count: notifyContacts.length, mode: isCheckinTrigger ? "checkin" : "sos" },
       },
     ];
 
+    const skipSosCountdown = input.isTest || isCheckinTrigger;
     const session = await emergencySessionRepo.create(userId, {
-      status: input.isTest ? "active" : "countdown",
+      status: skipSosCountdown ? "active" : "countdown",
       trigger: input.trigger,
       isTest: input.isTest,
       latitude: lat || null,
@@ -155,7 +159,7 @@ export class EmergencyEngineService {
       smsPreview,
       callPreview,
       timeline,
-      contactsNotified: sosContacts.map((c) => c.id),
+      contactsNotified: notifyContacts.map((c) => c.id),
     });
 
     await activityLogRepo.create(userId, {
@@ -558,7 +562,12 @@ export class SafeCheckinService {
           emergencySessionId: emergencySession.id,
         });
       } catch {
-        // Active emergency may already exist — still return missed checkin
+        emergencySession = await engine.getActiveSession(userId);
+        if (emergencySession) {
+          await safeCheckinRepo.update(checkinId, userId, {
+            emergencySessionId: emergencySession.id,
+          });
+        }
       }
     }
 

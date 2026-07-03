@@ -12,7 +12,8 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "cap:sync": "npx cap sync",
-    "cap:android": "npx cap open android"
+    "cap:android": "npx cap open android",
+    "cap:apk": "npm run cap:sync && cd android && gradlew.bat assembleRelease && node -e \"const fs=require('fs');const p='app/build/outputs/apk/release/app-release.apk';const d='../releases';if(!fs.existsSync(d))fs.mkdirSync(d);fs.copyFileSync(p,d+'/Guardian-1.0.0.apk');console.log('APK: releases/Guardian-1.0.0.apk');\""
   },
   "dependencies": {
     "@capacitor/android": "^8.4.1",

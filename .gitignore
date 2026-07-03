@@ -44,3 +44,8 @@ next-env.d.ts
 
 # capacitor plugin build output
 plugins/guardian-native/android/build/
+
+# android release signing (never commit secrets)
+android/keystore.properties
+android/*.keystore
+android/*.jks
